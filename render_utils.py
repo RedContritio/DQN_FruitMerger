@@ -17,8 +17,7 @@ def mix(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> N
             + alpha_back * background[:, :, c] * (1 - alpha_fore)
         )
 
-    background[:, :, 3] = np.ubyte(
-        (1 - (1 - alpha_fore) * (1 - alpha_back)) * 255)
+    background[:, :, 3] = np.ubyte((1 - (1 - alpha_fore) * (1 - alpha_back)) * 255)
 
 
 def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> None:
@@ -42,8 +41,7 @@ def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) ->
 
     # combine the background with the overlay image weighted by alpha
     background[:, :, :3] = (
-        background[:, :, :3] * (1 - alpha_mask) +
-        foreground_colors * alpha_mask
+        background[:, :, :3] * (1 - alpha_mask) + foreground_colors * alpha_mask
     )
 
 
@@ -89,8 +87,7 @@ def putText2(
         cv2.getTextSize(line, font_face, font_scale, thickness)[0] for line in lines
     ]
 
-    h_sum = sum([size[1] for size in sizes]) + \
-        (len(sizes) - 1) * INNER_LINE_MARGIN
+    h_sum = sum([size[1] for size in sizes]) + (len(sizes) - 1) * INNER_LINE_MARGIN
     w_max = max([size[0] for size in sizes])
 
     y_base = y - h_sum // 2
@@ -121,8 +118,7 @@ def putInverseColorText(
     put text on image, modify image inplace
     """
     mask = np.zeros((*image.shape[:2], 3), dtype=np.uint8)
-    putTextFunc(mask, text, pos, font_face,
-                font_scale, (255, 255, 255), thickness)
+    putTextFunc(mask, text, pos, font_face, font_scale, (255, 255, 255), thickness)
 
     # 0 -> 1, 1 -> -1: (2 * (0.5 - mask / 255.))
     # 1 -> 1,

@@ -119,8 +119,7 @@ class Agent:
         output_policy = paddle.squeeze(self.policy_net(feature_batch))
         action_batch = paddle.squeeze(action_batch)
         # print(action_batch, self.action_num)
-        action_batch_onehot = nn.functional.one_hot(
-            action_batch, self.action_num)
+        action_batch_onehot = nn.functional.one_hot(action_batch, self.action_num)
 
         # print(paddle.multiply(output_policy, action_batch_onehot).shape)
         policy_q_value = paddle.sum(
@@ -128,8 +127,7 @@ class Agent:
         )
 
         with paddle.no_grad():
-            output_target_next = paddle.squeeze(
-                self.target_net(next_feature_batch))
+            output_target_next = paddle.squeeze(self.target_net(next_feature_batch))
             target_next_q_value = paddle.max(output_target_next, axis=1)
 
         target_q_value = paddle.squeeze(reward_batch) + GAMMA * paddle.squeeze(
@@ -196,8 +194,7 @@ def run_episode(
                 f"Episode: {episode_id}, step: {step}, reward: {reward_sum}, e_greed: {e_greed}"
             )
         if debug and step % 100 == 0:
-            img_path = os.path.join(
-                OUTPUT_DIR, f"episode_{episode_id}_step_{step}.png")
+            img_path = os.path.join(OUTPUT_DIR, f"episode_{episode_id}_step_{step}.png")
             env.game.draw()
 
             env.game.save_screen(img_path)
@@ -218,8 +215,7 @@ if __name__ == "__main__":
 
     memory = ReplayMemory(MEMORY_SIZE)
 
-    agent = Agent(build_model, feature_dim, action_dim,
-                  e_greed, e_greed_decrement)
+    agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
 
     if os.path.exists(FINAL_PARAM_PATH):
         agent.policy_net.set_state_dict(paddle.load(FINAL_PARAM_PATH))
@@ -241,7 +237,6 @@ if __name__ == "__main__":
             )
             paddle.save(agent.policy_net.state_dict(), save_path)
             print(f"Saved model to {save_path}")
-            print(
-                f"Episode: {episode_id}, reward: {total_reward}, e_greed: {e_greed}")
+            print(f"Episode: {episode_id}, reward: {total_reward}, e_greed: {e_greed}")
 
     paddle.save(agent.policy_net.state_dict(), FINAL_PARAM_PATH)

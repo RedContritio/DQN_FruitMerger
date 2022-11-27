@@ -14,8 +14,7 @@ if __name__ == "__main__":
     e_greed_decrement = 1e-6
 
     env = GameInterface()
-    agent = Agent(build_model, feature_dim, action_dim,
-                  e_greed, e_greed_decrement)
+    agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
 
     model_path = "final.pdparams"
 
