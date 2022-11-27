@@ -1,0 +1,433 @@
+import os
+import random
+import typing
+import numpy as np
+import pymunk
+from threading import Lock
+from GameEvent import GameEventBase, EventType, MouseEvent
+import cv2
+
+from render_utils import cover, intersectRect, putInverseColorText, putText2
+
+GRAVITY = (0, 800)
+GAME_RESOLUTION = GAME_WIDTH, GAME_HEIGHT = 300, 400
+
+# list[0] is nonsense for type 0
+FRUIT_RADIUS = [int(1.3 * r) for r in [-1, 10, 15, 21, 23, 29, 35, 37, 50, 59, 60, 78]]
+FRUIT_RADIUS = [int(1.2 * r) for r in FRUIT_RADIUS]
+FRUIT_SIZES = [(2 * r, 2 * r) for r in FRUIT_RADIUS]
+
+FRUIT_IMAGE_PATHS = [f"res/{i:02d}.png" for i in range(11)]
+FRUIT_RAW_IMAGES = [
+    cv2.imread(FRUIT_IMAGE_PATHS[i], -1) if i > 0 else None for i in range(11)
+]
+
+FRUIT_IMAGES = [
+    None if img is None else cv2.resize(img, FRUIT_SIZES[i])
+    for i, img in enumerate(FRUIT_RAW_IMAGES)
+]
+
+MAX_WAITING_FRAME_COUNT = 200
+
+
+class Fruit:
+    def __init__(self, type: int, x: int, y: int) -> None:
+        self.type = type
+        self.r = FRUIT_RADIUS[self.type]
+        self.size = FRUIT_SIZES[self.type]
+
+        self.x, self.y = x, y
+
+    def update_position(self, x: int, y: int) -> None:
+        self.x, self.y = x, y
+
+    def draw(self, screen: np.ndarray) -> None:
+        Fruit.paint(screen, self.type, self.x, self.y)
+
+    def paint(
+        screen: np.ndarray, type: int, x: int, y: int, alpha: float = 1.0
+    ) -> None:
+        assert type > 0 and type <= 11
+        l, t = (x - FRUIT_RADIUS[type], y - FRUIT_RADIUS[type])
+        w, h = FRUIT_SIZES[type]
+
+        l, t, w, h = [int(v) for v in (l, t, w, h)]
+
+        il, it, iw, ih = [
+            int(v) for v in intersectRect((l, t, w, h), (0, 0, *screen.shape[1::-1]))
+        ]
+        # print(il, it, iw, ih)
+        # cv2.addWeighted(screen[it:it+ih, il:il+iw], 1 - alpha, FRUIT_IMAGES[type][it-t:it-t+ih, il-l:il-l+iw], alpha, 0, screen[it:it+ih, il:il+iw])
+        cover(
+            screen[it : it + ih, il : il + iw],
+            FRUIT_IMAGES[type][it - t : it - t + ih, il - l : il - l + iw],
+            alpha=alpha,
+        )
+        # cv2.circle(screen, (x, y), FRUIT_RADIUS[type], (255, 0, 0), 2)
+
+
+class GameCore(GameEventBase):
+    def __init__(self, gravity: typing.Tuple[int, int] = GRAVITY) -> None:
+        self.resolution = self.width, self.height = GAME_WIDTH, GAME_HEIGHT
+        self.init_x = int(self.width / 2)
+        self.init_y = int(0.15 * self.height)
+
+        self.score = 0
+        self.recent_score_delta = 0
+
+        self.fruits: typing.List[Fruit] = []
+        self.balls: typing.List[pymunk.Shape] = []
+
+        self.background_color = (0xE1, 0x69, 0x41, 0)
+        self.preset_background = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+        self.preset_background[:, :] = self.background_color
+        self.preset_redline_screen = self.preset_background.copy()
+        cv2.line(
+            self.preset_redline_screen,
+            (0, self.init_y),
+            (self.width, self.init_y),
+            (0, 0, 255),
+            2,
+        )
+        self.__screen = self.preset_background.copy()
+
+        self.lock = Lock()
+        self.render_lock = Lock()
+
+        self.stable_frame_threshold = 10
+        self.current_frame_id = 0
+        self.stable_frame_id = self.current_frame_id - self.stable_frame_threshold
+        self.clickable = False
+
+        self.largest_fruit_type = 1
+        self.current_fruit_type = self.create_random_fruit_type()
+
+        self.reset()
+
+        self.space = pymunk.Space()
+        self.space.gravity = gravity
+
+        self.reset()
+
+        self.init_segment()
+        self.setup_collision_handler()
+
+        super().__init__()
+
+    def reset(self):
+        for ball in self.balls:
+            self.space.remove(ball, ball.body)
+
+        self.prev_score, self.score = 0, 0
+
+        self.fruits.clear()
+        self.balls.clear()
+
+        self.current_frame_id = 0
+        self.stable_frame_id = self.current_frame_id - self.stable_frame_threshold
+        self.prev_stable_frame_id = self.stable_frame_id
+        self.clickable = False
+
+        self.largest_fruit_type = 1
+        self.current_fruit_type = self.create_random_fruit_type()
+
+        self.alive = True
+
+    def init_segment(self, thinkness: float = 20, friction: float = 0.6):
+        l, t = 0 - thinkness, 0 - thinkness - self.height // 2
+        r, b = self.width + thinkness, self.height + thinkness
+
+        def create_segment(
+            p1: typing.Tuple[int, int], p2: typing.Tuple[int, int]
+        ) -> pymunk.Segment:
+            s = pymunk.Segment(self.space.static_body, p1, p2, thinkness)
+            s.friction = friction
+            return s
+
+        self.space.add(create_segment((l, t), (l, b)))
+        self.space.add(create_segment((r, t), (r, b)))
+        # no top wall
+        # self.space.add(create_segment((l, t), (r, t)))
+        self.space.add(create_segment((l, b), (r, b)))
+
+    def setup_collision_handler(self):
+        def collision_post_solve(arbiter: pymunk.Arbiter, space: pymunk.Space, _data):
+            with self.lock:
+                s0, s1 = arbiter.shapes[:2]
+                new_type = s0.collision_type + 1
+                x1, y1 = s0.body.position
+                x2, y2 = s1.body.position
+                x, y = (x1, y1) if y1 > y2 else (x2, y2)
+
+                if s0 in self.balls and s1 in self.balls:
+                    self.remove_ball(space, s0)
+                    self.remove_ball(space, s1)
+
+                    fruit = Fruit(new_type, x, self.init_y)
+                    self.fruits.append(fruit)
+
+                    ball = self.create_ball(
+                        self.space, x, y, fruit.r // 10, fruit.r - 1, new_type
+                    )
+                    self.balls.append(ball)
+
+                    self.largest_fruit_type = max(self.largest_fruit_type, new_type)
+                    self.recent_score_delta = new_type if new_type < 11 else 100
+                    self.score += self.recent_score_delta
+
+        for collision_type in range(1, 11):
+            self.space.add_collision_handler(
+                collision_type, collision_type
+            ).post_solve = collision_post_solve
+
+    def create_random_fruit_type(self) -> int:
+        return random.randint(1, min(self.largest_fruit_type, 5))
+
+    def create_fruit(self, type: int, x: int) -> Fruit:
+        return Fruit(type, x, self.init_y - FRUIT_RADIUS[type])
+
+    def create_ball(
+        self,
+        space: pymunk.Space,
+        x: int,
+        y: int,
+        mass: int = 1,
+        radius: int = 7,
+        type: int = 1,
+    ) -> pymunk.Shape:
+        ball_moment = pymunk.moment_for_circle(mass, 0, radius)
+        ball_body = pymunk.Body(mass, ball_moment)
+        ball_body.position = x, y
+        ball_shape = pymunk.Circle(ball_body, radius)
+        ball_shape.elasticity = 0.3
+        ball_shape.friction = 0.6
+        ball_shape.collision_type = type
+        space.add(ball_body, ball_shape)
+        return ball_shape
+
+    def remove_ball(self, space: pymunk.Space, ball: pymunk.Circle):
+        p = self.balls.index(ball)
+
+        space.remove(ball, ball.body)
+
+        self.balls.pop(p)
+        self.fruits.pop(p)
+
+    def save_screen(self, path: str = "screenshot.png") -> bool:
+        rgb_img = cv2.cvtColor(self.screen, cv2.COLOR_BGRA2BGR)
+        return cv2.imwrite(path, rgb_img)
+
+    def draw(self, debug=False):
+        backbuffer = self.preset_background.copy()
+
+        # if self.clickable:
+        if self.current_fruit_type > 0:
+            y = self.init_y - FRUIT_RADIUS[self.current_fruit_type]
+            Fruit.paint(
+                backbuffer,
+                self.current_fruit_type,
+                self.init_x,
+                y,
+                1 if self.clickable else 0.5,
+            )
+
+        for i, f in enumerate(self.fruits):
+            f.draw(backbuffer)
+            if debug:
+                cv2.circle(backbuffer, (int(f.x), int(f.y)), f.r // 2, (0, 0, 0), 1)
+                putInverseColorText(
+                    backbuffer,
+                    f"{self.balls[i].body.velocity.y:.2f}",
+                    (int(f.x), int(f.y + f.r)),
+                    font_scale=0.5,
+                    thickness=1,
+                )
+
+        cv2.addWeighted(backbuffer, 1, self.preset_redline_screen, 0.5, 0, backbuffer)
+
+        putInverseColorText(
+            backbuffer,
+            f"Score: {self.score}",
+            (0, 20),
+            font_scale=0.7,
+            thickness=1,
+            putTextFunc=cv2.putText,
+        )
+
+        if not self.alive:
+            putInverseColorText(
+                backbuffer,
+                f"Failed\nClick RButton to Restart",
+                (int(self.width / 2), int(self.height / 2)),
+                font_scale=0.7,
+                thickness=2,
+            )
+
+        with self.render_lock:
+            self.__screen[:, :, :] = backbuffer
+            return self.__screen
+
+    @property
+    def screen(self) -> np.ndarray:
+        with self.render_lock:
+            return self.__screen
+
+    def get_features(self, class_count: int = 11, memory_size: int = 15) -> np.ndarray:
+        """
+        params:
+            - class_count: default 11, 1 ~ 11
+            - memory_size: default 15
+
+        return:
+            - features: (memory_size + 1, class_count + 2)
+        """
+        feature_current = np.zeros((1, class_count + 2))
+        feature_current[0, self.current_fruit_type] = 1
+        feature_current[0, 0] = 0.5
+
+        feature_fruits = np.zeros((memory_size, class_count + 2))
+
+        recent_fruit = [(f.x, f.y, f.type) for f in self.fruits]
+
+        recent_fruit.sort(key=lambda x: x[1])
+
+        for i, (x, y, t) in enumerate(recent_fruit[:memory_size]):
+            feature_fruits[i, t] = 1
+            feature_fruits[i, 0] = x / self.width
+            feature_fruits[i, -1] = y / self.height
+
+        feature = np.concatenate((feature_current, feature_fruits), axis=0)
+        return feature
+
+    def update_until_stable(self, fps: float = 60, max_seconds: int = 5):
+        self.set_unstable()
+
+        max_steps = int(fps * max_seconds)
+        step = 0
+
+        while (
+            self.current_frame_id <= self.stable_frame_id + self.stable_frame_threshold
+            and step < max_steps
+        ):
+            self.update(1.0 / fps)
+            step += 1
+
+        if step == max_steps:
+            # if not os.path.exists("screenshots"):
+            #     os.mkdir("screenshots")
+
+            # print("status: forever unstable")
+            # for i in range(10):
+            #     self.draw(debug=True)
+            #     self.save_screen(
+            #         os.path.join(
+            #             "screenshots",
+            #             f"step_{i}_velocity_{self.max_balls_velocity_y}.png",
+            #         )
+            #     )
+            #     print(
+            #         self.current_frame_id,
+            #         self.stable_frame_id,
+            #         self.alive,
+            #         self.clickable,
+            #     )
+            #     self.update(1.0 / fps)
+            
+            self.clickable = True
+
+    def update(self, time_delta: float):
+        # print(self.current_frame_id, self.stable_frame_id, self.alive, self.clickable, file=f)
+        self.current_frame_id += 1
+        self.space.step(time_delta)
+
+        stable = self.check_stable()
+        if not stable:
+            self.set_unstable()
+
+        self.alive = self.alive and self.check_alive()
+        if not self.alive:
+            for event in self.get_events():
+                if event.type == EventType.RBUTTONDOWN:
+                    self.reset()
+                    break
+            return
+
+        if (
+            not self.clickable
+            and self.current_frame_id
+            > self.stable_frame_id + self.stable_frame_threshold
+        ):
+            self.prev_stable_frame_id = self.stable_frame_id
+            self.clickable = True
+
+        for event in self.get_events():
+            if event.type == EventType.LBUTTONDOWN and self.clickable:
+                x, _y = event.pos
+
+                fruit = self.create_fruit(self.current_fruit_type, x)
+                self.fruits.append(fruit)
+
+                y = self.init_y - fruit.r
+                ball = self.create_ball(
+                    self.space,
+                    x,
+                    y,
+                    (fruit.r // 10) ** 2,
+                    fruit.r - 1,
+                    self.current_fruit_type,
+                )
+                self.balls.append(ball)
+
+                self.current_fruit_type = self.create_random_fruit_type()
+                self.set_unstable()
+                self.clickable = False
+
+            elif event.type == EventType.MOUSEMOVE:
+                self.init_x, _y = event.pos
+                self.init_x = max(
+                    self.init_x, 0 + FRUIT_RADIUS[self.current_fruit_type]
+                )
+                self.init_x = min(
+                    self.init_x, self.width - FRUIT_RADIUS[self.current_fruit_type]
+                )
+
+        assert not self.lock.locked()
+
+        with self.lock:
+            for i, ball in enumerate(self.balls):
+                x, y = ball.body.position
+                angle = ball.body.angle
+
+                # xi, yi = int(x), int(y)
+
+                self.fruits[i].update_position(x, y)
+
+    def set_unstable(self) -> None:
+        self.stable_frame_id = self.current_frame_id + 1
+
+    def check_stable(self) -> bool:
+        return self.max_balls_velocity_y < 20
+
+    @property
+    def max_balls_velocity_y(self) -> float:
+        return (
+            max([abs(ball.body.velocity.y) for ball in self.balls])
+            if len(self.balls) > 0
+            else 0
+        )
+
+    def check_alive(self) -> bool:
+        if self.current_frame_id > self.stable_frame_id + self.stable_frame_threshold:
+            for f in self.fruits:
+                if f.y < self.init_y:
+                    return False
+        return True
+
+    def click(self, pos: tuple[int, int]):
+        self.add_event(MouseEvent(EventType.LBUTTONDOWN, pos))
+
+    def move(self, pos: tuple[int, int]):
+        self.add_event(MouseEvent(EventType.MOUSEMOVE, pos))
+
+    def rclick(self, pos: tuple[int, int]):
+        self.add_event(MouseEvent(EventType.RBUTTONDOWN, pos))
