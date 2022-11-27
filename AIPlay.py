@@ -57,4 +57,5 @@ if __name__ == "__main__":
 
     env.game.draw()
     cv2.imshow(WINNAME, env.game.screen)
+    print(f'score: {env.game.score}')
     key = cv2.waitKey(0)

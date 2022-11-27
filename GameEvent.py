@@ -34,10 +34,11 @@ class GameEventBase:
     def add_event(self, event: Event):
         self.__events.append(event)
 
-    def get_events(self) -> typing.List[Event]:
-        events = self.__events[:]
+    @property
+    def events(self) -> typing.List[Event]:
+        _events = self.__events[:]
         self.__events.clear()
-        return events
+        return _events
 
 
 if __name__ == "__main__":
@@ -45,5 +46,5 @@ if __name__ == "__main__":
 
     base.add_event(MouseEvent(EventType.LBUTTONDOWN, (1, 2)))
 
-    for e in base.get_events():
+    for e in base.events:
         print(e)

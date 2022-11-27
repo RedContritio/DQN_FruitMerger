@@ -345,7 +345,7 @@ class GameCore(GameEventBase):
 
         self.alive = self.alive and self.check_alive()
         if not self.alive:
-            for event in self.get_events():
+            for event in self.events:
                 if event.type == EventType.RBUTTONDOWN:
                     self.reset()
                     break
@@ -359,7 +359,7 @@ class GameCore(GameEventBase):
             self.prev_stable_frame_id = self.stable_frame_id
             self.clickable = True
 
-        for event in self.get_events():
+        for event in self.events:
             if event.type == EventType.LBUTTONDOWN and self.clickable:
                 x, _y = event.pos
 
