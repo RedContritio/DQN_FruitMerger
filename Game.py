@@ -1,10 +1,10 @@
-import random
 import typing
 import numpy as np
 import pymunk
 from threading import Lock
 from GameEvent import GameEventBase, EventType, MouseEvent
 import cv2
+from PRNG import PRNG
 
 from render_utils import cover, intersectRect, putInverseColorText, putText2
 
@@ -90,6 +90,8 @@ class GameCore(GameEventBase):
 
         self.lock = Lock()
         self.render_lock = Lock()
+        
+        self.prng = PRNG()
 
         self.stable_frame_threshold = 10
         self.current_frame_id = 0
@@ -111,7 +113,7 @@ class GameCore(GameEventBase):
 
         super().__init__()
 
-    def reset(self):
+    def reset(self, seed: int = None) -> None:
         for ball in self.balls:
             self.space.remove(ball, ball.body)
 
@@ -127,6 +129,8 @@ class GameCore(GameEventBase):
 
         self.largest_fruit_type = 1
         self.current_fruit_type = self.create_random_fruit_type()
+
+        self.prng.seed(**({} if seed is None else {"seed": seed}))
 
         self.alive = True
 
@@ -178,7 +182,7 @@ class GameCore(GameEventBase):
             ).post_solve = collision_post_solve
 
     def create_random_fruit_type(self) -> int:
-        return random.randint(1, min(self.largest_fruit_type, 5))
+        return self.prng.randint(1, min(self.largest_fruit_type, 5))
 
     def create_fruit(self, type: int, x: int) -> Fruit:
         return Fruit(type, x, self.init_y - FRUIT_RADIUS[type])

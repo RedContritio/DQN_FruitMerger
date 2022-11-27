@@ -59,7 +59,10 @@ class RandomAgent:
     def __init__(self, action_num: int) -> None:
         self.action_num = action_num
 
-    def sample(self, _feature: np.ndarray) -> int:
+    def sample(self, _feature: np.ndarray) -> np.ndarray:
+        return self.predict(_feature)
+        
+    def predict(self, feature: np.ndarray) -> np.ndarray:
         return np.random.randint(0, self.action_num, size=(1))
 
 
@@ -91,7 +94,7 @@ class Agent:
         self.global_step = 0
         self.update_target_steps = 200
 
-    def sample(self, feature: np.ndarray) -> int:
+    def sample(self, feature: np.ndarray) -> np.ndarray:
         if np.random.uniform() < self.e_greed:
             action = np.random.randint(0, self.action_num, size=(1))
         else:
@@ -212,16 +215,16 @@ def run_episode(
     return rewards_sum
 
 
-def evaluate(env: GameInterface, agent: Agent) -> typing.Tuple[float, float]:
+def evaluate(env: GameInterface, agent: Agent, e_greed: float = 0, seed: int = None) -> typing.Tuple[float, float]:
     scores, rewards_sums = [], []
     for _ in range(EVALUATE_TIMES):
-        env.reset()
+        env.reset(seed)
         action = np.random.randint(0, env.action_num)
         feature, _, alive = env.next(action)
         rewards_sum = 0
 
         while alive:
-            action = agent.sample(feature)
+            action = agent.predict(feature)
             feature, reward, alive = env.next(action)
 
             reward_sum = np.sum(reward)
@@ -234,14 +237,13 @@ def evaluate(env: GameInterface, agent: Agent) -> typing.Tuple[float, float]:
 
 
 def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> None:
-    print("DQN Agent:")
-    mean_score, mean_reward = evaluate(env, agent)
-    print(f"mean_score: {mean_score}, mean_reward: {mean_reward}")
+    seed = random.random()
+    mean_score, mean_reward = evaluate(env, agent, seed)
+    print(f"DQN Agent: mean_score: {mean_score}, mean_reward: {mean_reward}")
 
-    print("Random Agent:")
     random_agent = RandomAgent(action_count)
-    mean_score, mean_reward = evaluate(env, random_agent)
-    print(f"mean_score: {mean_score}, mean_reward: {mean_reward}")
+    mean_score, mean_reward = evaluate(env, random_agent, seed)
+    print(f"Random Agent: mean_score: {mean_score}, mean_reward: {mean_reward}")
 
 
 if __name__ == "__main__":
@@ -275,10 +277,12 @@ if __name__ == "__main__":
 
         if episode_id % episode_per_save == 0:
             save_path = os.path.join(WEIGHT_DIR, f"episode_{episode_id}.pdparams")
-            paddle.save(agent.policy_net.state_dict(), save_path)
-            print(f"Saved model to {save_path}")
-            print(f"Episode: {episode_id}, reward: {total_reward}, e_greed: {e_greed}")
+            # paddle.save(agent.policy_net.state_dict(), save_path)
+            # print(f"Saved model to {save_path}")
+            
+            print(f"Episode: {episode_id}, e_greed: {e_greed}")
+            
+            compare_with_random(env, agent, action_dim)
 
     paddle.save(agent.policy_net.state_dict(), FINAL_PARAM_PATH)
 
-    compare_with_random(env, agent, action_dim)

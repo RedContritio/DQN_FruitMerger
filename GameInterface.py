@@ -15,8 +15,8 @@ class GameInterface:
         self.action_num = GameInterface.ACTION_NUM
         self.action_segment_len = self.game.width / GameInterface.ACTION_NUM
 
-    def reset(self) -> None:
-        self.game.reset()
+    def reset(self, seed: int = None) -> None:
+        self.game.reset(seed)
 
     def simulate_until_stable(self) -> None:
         self.game.update_until_stable(GameInterface.SIMULATE_FPS)
