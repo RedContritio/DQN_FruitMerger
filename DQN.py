@@ -27,6 +27,7 @@ GAMMA = 0.99
 
 EVALUATE_TIMES = 50
 
+
 class ReplayMemory(collections.deque):
     def __init__(self, max_size: int = MEMORY_SIZE) -> None:
         super().__init__(maxlen=max_size)
@@ -202,12 +203,14 @@ def run_episode(
 
     return rewards_sum
 
+
 class RandomAgent:
     def __init__(self, action_num: int) -> None:
         self.action_num = action_num
-    
+
     def sample(self, _feature: np.ndarray) -> int:
         return np.random.randint(0, self.action_num, size=(1))
+
 
 def evaluate(env: GameInterface, agent: Agent) -> typing.Tuple[float, float]:
     scores, rewards_sums = [], []
@@ -216,28 +219,30 @@ def evaluate(env: GameInterface, agent: Agent) -> typing.Tuple[float, float]:
         action = np.random.randint(0, env.action_num)
         feature, _, alive = env.next(action)
         rewards_sum = 0
-        
+
         while alive:
             action = agent.sample(feature)
             feature, reward, alive = env.next(action)
 
             reward_sum = np.sum(reward)
             rewards_sum += reward_sum
-        
+
         scores.append(env.game.score)
         rewards_sums.append(rewards_sum)
-    
+
     return np.mean(scores), np.mean(rewards_sums)
 
-def compare_with_random(env: GameInterface, agent: Agent) -> None:
-    print('DQN Agent:')
-    mean_score, mean_reward = evaluate(env, agent)
-    print(f'mean_score: {mean_score}, mean_reward: {mean_reward}')
 
-    print('Random Agent:')
+def compare_with_random(env: GameInterface, agent: Agent) -> None:
+    print("DQN Agent:")
+    mean_score, mean_reward = evaluate(env, agent)
+    print(f"mean_score: {mean_score}, mean_reward: {mean_reward}")
+
+    print("Random Agent:")
     random_agent = RandomAgent(action_dim)
     mean_score, mean_reward = evaluate(env, random_agent)
-    print(f'mean_score: {mean_score}, mean_reward: {mean_reward}')
+    print(f"mean_score: {mean_score}, mean_reward: {mean_reward}")
+
 
 if __name__ == "__main__":
     class_count = 11
@@ -269,9 +274,7 @@ if __name__ == "__main__":
         total_reward = run_episode(env, agent, memory, episode_id)
 
         if episode_id % episode_per_save == 0:
-            save_path = os.path.join(
-                WEIGHT_DIR, f"episode_{episode_id}.pdparams"
-            )
+            save_path = os.path.join(WEIGHT_DIR, f"episode_{episode_id}.pdparams")
             paddle.save(agent.policy_net.state_dict(), save_path)
             print(f"Saved model to {save_path}")
             print(f"Episode: {episode_id}, reward: {total_reward}, e_greed: {e_greed}")
