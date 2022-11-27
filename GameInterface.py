@@ -26,7 +26,7 @@ class GameInterface:
 
         return (x, 0)
 
-    def next(self, action: int):
+    def next(self, action: int) -> typing.Tuple[np.ndarray, int, bool]:
         self.simulate_until_stable()
 
         feature = self.game.get_features()

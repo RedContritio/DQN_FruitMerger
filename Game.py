@@ -26,8 +26,6 @@ FRUIT_IMAGES = [
     for i, img in enumerate(FRUIT_RAW_IMAGES)
 ]
 
-MAX_WAITING_FRAME_COUNT = 200
-
 
 class Fruit:
     def __init__(self, type: int, x: int, y: int) -> None:

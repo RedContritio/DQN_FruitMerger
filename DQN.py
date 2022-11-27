@@ -55,6 +55,14 @@ def build_model(input_size: int, output_size: int) -> nn.Layer:
     return model_prototype
 
 
+class RandomAgent:
+    def __init__(self, action_num: int) -> None:
+        self.action_num = action_num
+
+    def sample(self, _feature: np.ndarray) -> int:
+        return np.random.randint(0, self.action_num, size=(1))
+
+
 class Agent:
     def __init__(
         self,
@@ -204,14 +212,6 @@ def run_episode(
     return rewards_sum
 
 
-class RandomAgent:
-    def __init__(self, action_num: int) -> None:
-        self.action_num = action_num
-
-    def sample(self, _feature: np.ndarray) -> int:
-        return np.random.randint(0, self.action_num, size=(1))
-
-
 def evaluate(env: GameInterface, agent: Agent) -> typing.Tuple[float, float]:
     scores, rewards_sums = [], []
     for _ in range(EVALUATE_TIMES):
@@ -233,13 +233,13 @@ def evaluate(env: GameInterface, agent: Agent) -> typing.Tuple[float, float]:
     return np.mean(scores), np.mean(rewards_sums)
 
 
-def compare_with_random(env: GameInterface, agent: Agent) -> None:
+def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> None:
     print("DQN Agent:")
     mean_score, mean_reward = evaluate(env, agent)
     print(f"mean_score: {mean_score}, mean_reward: {mean_reward}")
 
     print("Random Agent:")
-    random_agent = RandomAgent(action_dim)
+    random_agent = RandomAgent(action_count)
     mean_score, mean_reward = evaluate(env, random_agent)
     print(f"mean_score: {mean_score}, mean_reward: {mean_reward}")
 
@@ -281,4 +281,4 @@ if __name__ == "__main__":
 
     paddle.save(agent.policy_net.state_dict(), FINAL_PARAM_PATH)
 
-    compare_with_random(env, agent)
+    compare_with_random(env, agent, action_dim)
