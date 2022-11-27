@@ -4,7 +4,7 @@ from GameInterface import GameInterface
 from DQN import Agent, build_model
 import paddle
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     class_count = 11
     memory_size = 15
 
@@ -14,9 +14,10 @@ if __name__ == '__main__':
     e_greed_decrement = 1e-6
 
     env = GameInterface()
-    agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
+    agent = Agent(build_model, feature_dim, action_dim,
+                  e_greed, e_greed_decrement)
 
-    model_path = 'final.pdparams'
+    model_path = "final.pdparams"
 
     agent.policy_net.set_state_dict(paddle.load(model_path))
 
@@ -28,7 +29,7 @@ if __name__ == '__main__':
 
     assert alive
 
-    WINNAME = 'fruit-merger AI'
+    WINNAME = "fruit-merger AI"
 
     cv2.namedWindow(WINNAME)
 
@@ -42,7 +43,7 @@ if __name__ == '__main__':
         # close the window
         if cv2.getWindowProperty(WINNAME, cv2.WND_PROP_VISIBLE) <= 0:
             break
-        
+
         step += 1
 
         action = agent.sample(feature)
@@ -52,9 +53,8 @@ if __name__ == '__main__':
         rewards_sum += reward_sum
 
         feature = next_feature
-        
-        print(f'step: {step}, reward: {reward_sum}, rewards_sum: {rewards_sum}')
-        
+
+        print(f"step: {step}, reward: {reward_sum}, rewards_sum: {rewards_sum}")
 
     env.game.draw()
     cv2.imshow(WINNAME, env.game.screen)

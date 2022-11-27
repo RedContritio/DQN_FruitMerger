@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 
-def mix(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0):
+def mix(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> None:
     """
     mix foreground image to background image, modify background inplace
     """
@@ -17,10 +17,11 @@ def mix(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0):
             + alpha_back * background[:, :, c] * (1 - alpha_fore)
         )
 
-    background[:, :, 3] = np.ubyte((1 - (1 - alpha_fore) * (1 - alpha_back)) * 255)
+    background[:, :, 3] = np.ubyte(
+        (1 - (1 - alpha_fore) * (1 - alpha_back)) * 255)
 
 
-def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0):
+def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> None:
     """
     cover foreground image to background image, modify background inplace
     ref: https://stackoverflow.com/a/71701023
@@ -41,11 +42,12 @@ def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0):
 
     # combine the background with the overlay image weighted by alpha
     background[:, :, :3] = (
-        background[:, :, :3] * (1 - alpha_mask) + foreground_colors * alpha_mask
+        background[:, :, :3] * (1 - alpha_mask) +
+        foreground_colors * alpha_mask
     )
 
 
-def intersectRect(rect1: typing.List[int], rect2: typing.List[int]):
+def intersectRect(rect1: typing.List[int], rect2: typing.List[int]) -> typing.List[int]:
     """
     intersect two rectangles, return the intersected rectangle
 
@@ -70,24 +72,25 @@ def intersectRect(rect1: typing.List[int], rect2: typing.List[int]):
 def putText2(
     image: np.ndarray,
     text: str,
-    pos: typing.List[int],
+    center: typing.List[int],
     font_face: int = 0,
     font_scale: float = 1.0,
     color: typing.List[int] = (255, 255, 255),
     thickness: int = 1,
-):
+) -> None:
     """
     put text on image, modify image inplace
     """
     INNER_LINE_MARGIN = 5
-    x, y = pos
+    x, y = center
     lines = text.splitlines()
 
     sizes = [
         cv2.getTextSize(line, font_face, font_scale, thickness)[0] for line in lines
     ]
 
-    h_sum = sum([size[1] for size in sizes]) + (len(sizes) - 1) * INNER_LINE_MARGIN
+    h_sum = sum([size[1] for size in sizes]) + \
+        (len(sizes) - 1) * INNER_LINE_MARGIN
     w_max = max([size[0] for size in sizes])
 
     y_base = y - h_sum // 2
@@ -113,12 +116,13 @@ def putInverseColorText(
     font_scale: float = 1.0,
     thickness: int = 1,
     putTextFunc: typing.Callable = putText2,
-):
+) -> None:
     """
     put text on image, modify image inplace
     """
     mask = np.zeros((*image.shape[:2], 3), dtype=np.uint8)
-    putTextFunc(mask, text, pos, font_face, font_scale, (255, 255, 255), thickness)
+    putTextFunc(mask, text, pos, font_face,
+                font_scale, (255, 255, 255), thickness)
 
     # 0 -> 1, 1 -> -1: (2 * (0.5 - mask / 255.))
     # 1 -> 1,

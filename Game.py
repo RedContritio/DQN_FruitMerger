@@ -1,4 +1,3 @@
-import os
 import random
 import typing
 import numpy as np
@@ -13,7 +12,8 @@ GRAVITY = (0, 800)
 GAME_RESOLUTION = GAME_WIDTH, GAME_HEIGHT = 300, 400
 
 # list[0] is nonsense for type 0
-FRUIT_RADIUS = [int(1.3 * r) for r in [-1, 10, 15, 21, 23, 29, 35, 37, 50, 59, 60, 78]]
+FRUIT_RADIUS = [int(1.3 * r)
+                for r in [-1, 10, 15, 21, 23, 29, 35, 37, 50, 59, 60, 78]]
 FRUIT_RADIUS = [int(1.2 * r) for r in FRUIT_RADIUS]
 FRUIT_SIZES = [(2 * r, 2 * r) for r in FRUIT_RADIUS]
 
@@ -59,8 +59,8 @@ class Fruit:
         # print(il, it, iw, ih)
         # cv2.addWeighted(screen[it:it+ih, il:il+iw], 1 - alpha, FRUIT_IMAGES[type][it-t:it-t+ih, il-l:il-l+iw], alpha, 0, screen[it:it+ih, il:il+iw])
         cover(
-            screen[it : it + ih, il : il + iw],
-            FRUIT_IMAGES[type][it - t : it - t + ih, il - l : il - l + iw],
+            screen[it: it + ih, il: il + iw],
+            FRUIT_IMAGES[type][it - t: it - t + ih, il - l: il - l + iw],
             alpha=alpha,
         )
         # cv2.circle(screen, (x, y), FRUIT_RADIUS[type], (255, 0, 0), 2)
@@ -79,7 +79,8 @@ class GameCore(GameEventBase):
         self.balls: typing.List[pymunk.Shape] = []
 
         self.background_color = (0xE1, 0x69, 0x41, 0)
-        self.preset_background = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+        self.preset_background = np.zeros(
+            (self.height, self.width, 4), dtype=np.uint8)
         self.preset_background[:, :] = self.background_color
         self.preset_redline_screen = self.preset_background.copy()
         cv2.line(
@@ -171,7 +172,8 @@ class GameCore(GameEventBase):
                     )
                     self.balls.append(ball)
 
-                    self.largest_fruit_type = max(self.largest_fruit_type, new_type)
+                    self.largest_fruit_type = max(
+                        self.largest_fruit_type, new_type)
                     self.recent_score_delta = new_type if new_type < 11 else 100
                     self.score += self.recent_score_delta
 
@@ -234,7 +236,8 @@ class GameCore(GameEventBase):
         for i, f in enumerate(self.fruits):
             f.draw(backbuffer)
             if debug:
-                cv2.circle(backbuffer, (int(f.x), int(f.y)), f.r // 2, (0, 0, 0), 1)
+                cv2.circle(backbuffer, (int(f.x), int(f.y)),
+                           f.r // 2, (0, 0, 0), 1)
                 putInverseColorText(
                     backbuffer,
                     f"{self.balls[i].body.velocity.y:.2f}",
@@ -243,7 +246,8 @@ class GameCore(GameEventBase):
                     thickness=1,
                 )
 
-        cv2.addWeighted(backbuffer, 1, self.preset_redline_screen, 0.5, 0, backbuffer)
+        cv2.addWeighted(
+            backbuffer, 1, self.preset_redline_screen, 0.5, 0, backbuffer)
 
         putInverseColorText(
             backbuffer,
@@ -332,7 +336,7 @@ class GameCore(GameEventBase):
             #         self.clickable,
             #     )
             #     self.update(1.0 / fps)
-            
+
             self.clickable = True
 
     def update(self, time_delta: float):
@@ -388,7 +392,8 @@ class GameCore(GameEventBase):
                     self.init_x, 0 + FRUIT_RADIUS[self.current_fruit_type]
                 )
                 self.init_x = min(
-                    self.init_x, self.width - FRUIT_RADIUS[self.current_fruit_type]
+                    self.init_x, self.width -
+                    FRUIT_RADIUS[self.current_fruit_type]
                 )
 
         assert not self.lock.locked()

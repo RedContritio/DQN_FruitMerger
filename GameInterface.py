@@ -43,7 +43,8 @@ class GameInterface:
 
         reward = reward if reward > 0 else -current_fruit
 
-        flatten_feature = np.expand_dims(feature.flatten(), axis=0).astype(np.float32)
+        flatten_feature = np.expand_dims(
+            feature.flatten(), axis=0).astype(np.float32)
 
         return flatten_feature, reward, alive
 
