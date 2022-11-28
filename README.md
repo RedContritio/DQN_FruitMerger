@@ -1165,37 +1165,37 @@ for episode_id in range(0, max_episode + 1):
 
     Start training.
     Episode: 0, e_greed: 0.49490400000013635
-    [DQN Agent]	:	mean_score: 19.12,	mean_reward: -2.64
+    [DQN Agent]		:	mean_score: 19.12,	mean_reward: -2.64
     [Random Agent]	:	mean_score: 147.58,	mean_reward: 63.36
     Episode: 200, e_greed: 0.4849900000004016
-    [DQN Agent]	:	mean_score: 151.68,	mean_reward: 74.04
+    [DQN Agent]		:	mean_score: 151.68,	mean_reward: 74.04
     [Random Agent]	:	mean_score: 140.34,	mean_reward: 60.68
     Episode: 400, e_greed: 0.4753390000006598
-    [DQN Agent]	:	mean_score: 153.2,	mean_reward: 71.5
+    [DQN Agent]		:	mean_score: 153.2,	mean_reward: 71.5
     [Random Agent]	:	mean_score: 149.84,	mean_reward: 66.22
     Episode: 600, e_greed: 0.4657300000009169
-    [DQN Agent]	:	mean_score: 196.84,	mean_reward: 105.74
+    [DQN Agent]		:	mean_score: 196.84,	mean_reward: 105.74
     [Random Agent]	:	mean_score: 149.66,	mean_reward: 66.58
     Episode: 800, e_greed: 0.45574600000118404
-    [DQN Agent]	:	mean_score: 190.68,	mean_reward: 96.26
+    [DQN Agent]		:	mean_score: 190.68,	mean_reward: 96.26
     [Random Agent]	:	mean_score: 140.6,	mean_reward: 59.8
     Episode: 1000, e_greed: 0.44584100000144905
-    [DQN Agent]	:	mean_score: 179.94,	mean_reward: 87.88
+    [DQN Agent]		:	mean_score: 179.94,	mean_reward: 87.88
     [Random Agent]	:	mean_score: 153.7,	mean_reward: 70.7
     Episode: 1200, e_greed: 0.43597800000171294
-    [DQN Agent]	:	mean_score: 204.18,	mean_reward: 108.0
+    [DQN Agent]		:	mean_score: 204.18,	mean_reward: 108.0
     [Random Agent]	:	mean_score: 162.06,	mean_reward: 74.84
     Episode: 1400, e_greed: 0.4259410000019815
     [DQN Agent]	:	mean_score: 197.04,	mean_reward: 100.78
     [Random Agent]	:	mean_score: 165.24,	mean_reward: 81.72
     Episode: 1600, e_greed: 0.4160950000022449
-    [DQN Agent]	:	mean_score: 215.94,	mean_reward: 118.0
+    [DQN Agent]		:	mean_score: 215.94,	mean_reward: 118.0
     [Random Agent]	:	mean_score: 146.36,	mean_reward: 63.88
     Episode: 1800, e_greed: 0.40605400000251357
-    [DQN Agent]	:	mean_score: 197.7,	mean_reward: 105.32
+    [DQN Agent]		:	mean_score: 197.7,	mean_reward: 105.32
     [Random Agent]	:	mean_score: 154.18,	mean_reward: 70.62
     Episode: 2000, e_greed: 0.3961830000027777
-    [DQN Agent]	:	mean_score: 210.28,	mean_reward: 114.82
+    [DQN Agent]		:	mean_score: 210.28,	mean_reward: 114.82
     [Random Agent]	:	mean_score: 160.0,	mean_reward: 73.52
     
 
@@ -1431,12 +1431,12 @@ print(
 )
 ```
 
-    [DQN Agent]	:	mean_score: 197.125,	mean_reward: 103.665,
-    			max_score: 358,	max_reward: 237,
-    			min_score: 59,	min_reward: 1
+    [DQN Agent]		:	mean_score: 197.125,	mean_reward: 103.665,
+    					max_score: 358,	max_reward: 237,
+    					min_score: 59,	min_reward: 1
     [Random Agent]	:	mean_score: 146.37,	mean_reward: 66.315,
-    			max_score: 318,	max_reward: 194,
-    			min_score: 45,	min_reward: -14
+    					max_score: 318,	max_reward: 194,
+    					min_score: 45,	min_reward: -14
     
 
 可以看到，使用强化学习后，得分显著优于随机动作，因此认为该网络能学习到游戏策略。
