@@ -90,7 +90,7 @@ class GameCore(GameEventBase):
 
         self.lock = Lock()
         self.render_lock = Lock()
-        
+
         self.prng = PRNG()
 
         self.stable_frame_threshold = 10
@@ -273,32 +273,55 @@ class GameCore(GameEventBase):
         with self.render_lock:
             return self.__screen
 
-    def get_features(self, class_count: int = 11, memory_size: int = 15) -> np.ndarray:
+    def get_features(self, width: int, height: int) -> np.ndarray:
         """
         params:
-            - class_count: default 11, 1 ~ 11
-            - memory_size: default 15
-
+            - width: width of the grid
+            - height: height of the grid
         return:
-            - features: (memory_size + 1, class_count + 2)
+            - features: (height, width, 2) np.ndarray
+                - features[:, :, 0]: smaller than current fruit
+                - features[:, :, 1]: larger than current fruit
         """
-        feature_current = np.zeros((1, class_count + 2))
-        feature_current[0, self.current_fruit_type] = 1
-        feature_current[0, 0] = 0.5
+        uw, uh = self.width / width, self.height / height
 
-        feature_fruits = np.zeros((memory_size, class_count + 2))
+        features = np.zeros((height, width, 2), dtype=np.float32)
 
-        recent_fruit = [(f.x, f.y, f.type) for f in self.fruits]
+        # type, dr
+        auxilary = np.zeros((height, width, 2), dtype=np.float32)
+        auxilary[:, :, 1] = np.inf
 
-        recent_fruit.sort(key=lambda x: x[1])
+        threshold = ((uw**2) + (uh**2)) // 2
 
-        for i, (x, y, t) in enumerate(recent_fruit[:memory_size]):
-            feature_fruits[i, t] = 1
-            feature_fruits[i, 0] = x / self.width
-            feature_fruits[i, -1] = y / self.height
+        for f in self.fruits:
+            r2 = f.r * f.r
+            for j in range(width):
+                x = (0.5 + j) * uw
+                for i in range(height):
+                    y = (0.5 + i) * uh
 
-        feature = np.concatenate((feature_current, feature_fruits), axis=0)
-        return feature
+                    dx, dy = f.x - x, f.y - y
+                    # dr = np.sqrt(dx * dx + dy * dy) - f.r
+                    dr = dx * dx + dy * dy - r2
+
+                    if dr < threshold and dr < auxilary[i, j, 1]:
+                        auxilary[i, j, 0] = f.type
+                        auxilary[i, j, 1] = dr
+
+        is_empty = auxilary[:, :, 0] == 0
+        is_same = auxilary[:, :, 0] == self.current_fruit_type
+
+        features[:, :, 0] = auxilary[:, :, 0] - self.current_fruit_type
+        features[:, :, 0] = features[:, :, 0].clip(max=0)
+        features[:, :, 0][is_same] = 1
+        features[:, :, 0][is_empty] = 0
+
+        features[:, :, 1] = self.current_fruit_type - auxilary[:, :, 0]
+        features[:, :, 1] = features[:, :, 1].clip(max=0)
+        features[:, :, 1][is_same] = 1
+        features[:, :, 1][is_empty] = 0
+
+        return features
 
     def update_until_stable(self, fps: float = 60, max_seconds: int = 5):
         self.set_unstable()
@@ -432,3 +455,75 @@ class GameCore(GameEventBase):
 
     def rclick(self, pos: tuple[int, int]):
         self.add_event(MouseEvent(EventType.RBUTTONDOWN, pos))
+
+
+def visualize_feature(
+    feature: np.ndarray, game_resolution: typing.Tuple[int, int]
+) -> np.ndarray:
+    game_w, game_h = game_resolution
+    feature_img = np.zeros((game_h, game_w * 2, 3), dtype=np.uint8)
+
+    uw, uh = game_w / feature.shape[1], game_h / feature.shape[0]
+
+    # print(feature[:, :, 0].max(), feature[:, :, 0].min())
+    # print(feature[:, :, 1].max(), feature[:, :, 1].min())
+
+    _v2c = lambda v: 255 if v > 0 else (0 if v == 0 else int(-v / 13.0 * 255.0))
+    value2color = (
+        lambda v: (_v2c(v), _v2c(v), _v2c(v)) if v >= 0 else (127, _v2c(v), _v2c(v))
+    )
+
+    for i in range(feature.shape[0]):
+        for j in range(feature.shape[1]):
+            feature_img[
+                int(i * uh) : int((i + 1) * uh), int(j * uw) : int((j + 1) * uw)
+            ] = value2color(feature[i, j, 0])
+            feature_img[
+                int(i * uh) : int((i + 1) * uh),
+                int(j * uw + game_w) : int((j + 1) * uw + game_w),
+            ] = value2color(feature[i, j, 1])
+
+            putText2(
+                feature_img,
+                f"{int(feature[i, j, 0])}",
+                (int((j + 0.5) * uw), int((i + 0.5) * uh)),
+                font_scale=0.3,
+                color=(0, 0, 255),
+            )
+            putText2(
+                feature_img,
+                f"{int(feature[i, j, 1])}",
+                (int((j + 0.5) * uw + game_w), int((i + 0.5) * uh)),
+                font_scale=0.3,
+                color=(0, 0, 255),
+            )
+
+    for i in range(feature.shape[0]):
+        cv2.line(
+            feature_img, (0, int(i * uh)), (game_w * 2, int(i * uh)), (255, 0, 0), 1
+        )
+    cv2.line(feature_img, (0, game_h - 1), (game_w * 2, game_h - 1), (255, 0, 0), 1)
+
+    for j in range(feature.shape[1]):
+        cv2.line(feature_img, (int(j * uw), 0), (int(j * uw), game_h), (0, 255, 0), 1)
+    cv2.line(feature_img, (game_w - 1, 0), (game_w - 1, game_h), (0, 255, 0), 1)
+
+    for j in range(feature.shape[1]):
+        cv2.line(
+            feature_img,
+            (int(j * uw + game_w), 0),
+            (int(j * uw + game_w), game_h),
+            (0, 255, 0),
+            1,
+        )
+    cv2.line(
+        feature_img,
+        (game_w - 1 + game_w, 0),
+        (game_w - 1 + game_w, game_h),
+        (0, 255, 0),
+        1,
+    )
+
+    cv2.line(feature_img, (game_w, 0), (game_w, game_h), (255, 255, 0), 1)
+
+    return feature_img

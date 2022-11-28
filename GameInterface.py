@@ -10,6 +10,8 @@ class GameInterface:
     ACTION_NUM = 16
     SIMULATE_FPS = 60
 
+    FEATURE_MAP_WIDTH, FEATURE_MAP_HEIGHT = 16, 20
+
     def __init__(self) -> None:
         self.game = GameCore()
         self.action_num = GameInterface.ACTION_NUM
@@ -27,9 +29,6 @@ class GameInterface:
         return (x, 0)
 
     def next(self, action: int) -> typing.Tuple[np.ndarray, int, bool]:
-        self.simulate_until_stable()
-
-        feature = self.game.get_features()
         current_fruit = self.game.current_fruit_type
 
         score_1 = self.game.score
@@ -37,13 +36,18 @@ class GameInterface:
         self.game.click(self.decode_action(action))
         self.simulate_until_stable()
 
+        feature = self.game.get_features(
+            GameInterface.FEATURE_MAP_WIDTH, GameInterface.FEATURE_MAP_HEIGHT
+        )
+
         score_2 = self.game.score
 
         score, reward, alive = self.game.score, score_2 - score_1, self.game.alive
 
         reward = reward if reward > 0 else -current_fruit
 
-        flatten_feature = np.expand_dims(feature.flatten(), axis=0).astype(np.float32)
+        flatten_feature = feature.flatten().astype(np.float32)
+        # flatten_feature = np.expand_dims(feature.flatten(), axis=0).astype(np.float32)
 
         return flatten_feature, reward, alive
 
