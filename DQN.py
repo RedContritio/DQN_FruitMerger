@@ -61,7 +61,7 @@ class RandomAgent:
 
     def sample(self, _feature: np.ndarray) -> np.ndarray:
         return self.predict(_feature)
-        
+
     def predict(self, feature: np.ndarray) -> np.ndarray:
         return np.random.randint(0, self.action_num, size=(1))
 
@@ -215,7 +215,9 @@ def run_episode(
     return rewards_sum
 
 
-def evaluate(env: GameInterface, agent: Agent, e_greed: float = 0, seed: int = None) -> typing.Tuple[float, float]:
+def evaluate(
+    env: GameInterface, agent: Agent, e_greed: float = 0, seed: int = None
+) -> typing.Tuple[float, float]:
     scores, rewards_sums = [], []
     for _ in range(EVALUATE_TIMES):
         env.reset(seed)
@@ -247,11 +249,11 @@ def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> 
 
 
 if __name__ == "__main__":
-    class_count = 11
-    memory_size = 15
+    feature_map_height = GameInterface.FEATURE_MAP_HEIGHT
+    feature_map_width = GameInterface.FEATURE_MAP_WIDTH
 
     action_dim = GameInterface.ACTION_NUM
-    feature_dim = (class_count + 2) * (memory_size + 1)
+    feature_dim = feature_map_height * feature_map_width * 2
     e_greed = 0.4
     e_greed_decrement = 4e-6
 
@@ -279,10 +281,9 @@ if __name__ == "__main__":
             save_path = os.path.join(WEIGHT_DIR, f"episode_{episode_id}.pdparams")
             # paddle.save(agent.policy_net.state_dict(), save_path)
             # print(f"Saved model to {save_path}")
-            
+
             print(f"Episode: {episode_id}, e_greed: {e_greed}")
-            
+
             compare_with_random(env, agent, action_dim)
 
     paddle.save(agent.policy_net.state_dict(), FINAL_PARAM_PATH)
-

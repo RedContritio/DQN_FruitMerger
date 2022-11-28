@@ -1,19 +1,28 @@
+import typing
 import cv2
 import numpy as np
+from Game import visualize_feature
 from GameInterface import GameInterface
 from DQN import Agent, build_model
 import paddle
 
 if __name__ == "__main__":
-    class_count = 11
-    memory_size = 15
+    WINNAME = "fruit-merger AI"
+    WINNAME2 = "feature map"
+
+    cv2.namedWindow(WINNAME)
+    cv2.namedWindow(WINNAME2)
+
+    feature_map_height = GameInterface.FEATURE_MAP_HEIGHT
+    feature_map_width = GameInterface.FEATURE_MAP_WIDTH
 
     action_dim = GameInterface.ACTION_NUM
-    feature_dim = (class_count + 2) * (memory_size + 1)
-    e_greed = 0
-    e_greed_decrement = 1e-6
+    feature_dim = feature_map_height * feature_map_width * 2
+    e_greed = 0.4
+    e_greed_decrement = 4e-6
 
     env = GameInterface()
+
     agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
 
     model_path = "final.pdparams"
@@ -28,13 +37,16 @@ if __name__ == "__main__":
 
     assert alive
 
-    WINNAME = "fruit-merger AI"
-
-    cv2.namedWindow(WINNAME)
-
     while alive:
         env.game.draw()
         cv2.imshow(WINNAME, env.game.screen)
+
+        reshaped_feature = feature.reshape((feature_map_height, feature_map_width, 2))
+        feature_img = visualize_feature(reshaped_feature, env.game.resolution).astype(
+            np.uint8
+        )
+        cv2.imshow(WINNAME2, feature_img)
+
         key = cv2.waitKey(0)
 
         if key == ord("q") or key == 27:
