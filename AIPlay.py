@@ -6,6 +6,8 @@ from GameInterface import GameInterface
 from DQN import Agent, build_model
 import paddle
 
+from render_utils import cover
+
 if __name__ == "__main__":
     WINNAME = "fruit-merger AI"
     WINNAME2 = "feature map"
@@ -38,8 +40,6 @@ if __name__ == "__main__":
     assert alive
 
     while alive:
-        env.game.draw()
-        cv2.imshow(WINNAME, env.game.screen)
 
         reshaped_feature = feature.reshape((feature_map_height, feature_map_width, 2))
         feature_img = visualize_feature(reshaped_feature, env.game.resolution).astype(
@@ -47,17 +47,34 @@ if __name__ == "__main__":
         )
         cv2.imshow(WINNAME2, feature_img)
 
-        key = cv2.waitKey(0)
+        step += 1
 
+        screen = env.game.draw()
+
+        action = agent.sample(feature)
+
+        unit_w = 1.0 * env.game.width / action_dim
+
+        red_rect = np.zeros_like(screen, dtype=np.uint8)
+        red_rect = cv2.rectangle(
+            red_rect,
+            (int(action * unit_w), 0),
+            (int((action + 1) * unit_w), env.game.height),
+            (0, 0, 255, 60),
+            -1,
+        )
+
+        cover(screen, red_rect, 1)
+
+        cv2.imshow(WINNAME, screen)
+
+        key = cv2.waitKey(0)
         if key == ord("q") or key == 27:
             break
         # close the window
         if cv2.getWindowProperty(WINNAME, cv2.WND_PROP_VISIBLE) <= 0:
             break
 
-        step += 1
-
-        action = agent.sample(feature)
         next_feature, reward, alive = env.next(action)
 
         reward_sum = np.sum(reward)
