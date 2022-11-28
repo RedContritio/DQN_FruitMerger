@@ -82,7 +82,7 @@ if __name__ == "__main__":
 
         feature = next_feature
 
-        print(f"step: {step}, reward: {reward_sum}, rewards_sum: {rewards_sum}")
+        # print(f"step: {step}, reward: {reward_sum}, rewards_sum: {rewards_sum}")
 
     env.game.draw()
     cv2.imshow(WINNAME, env.game.screen)

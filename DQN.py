@@ -225,10 +225,8 @@ def run_episode(
 
 
 def evaluate(
-    env: GameInterface, agent: Agent, e_greed: float = 0, seed: int = None
+    env: GameInterface, agent: Agent, seed: int = None
 ) -> typing.Tuple[float, float]:
-    scores, rewards_sums = [], []
-
     env.reset(seed)
     action = np.random.randint(0, env.action_num)
     feature, _, alive = env.next(action)
@@ -285,8 +283,8 @@ if __name__ == "__main__":
     agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
 
     if os.path.exists(FINAL_PARAM_PATH):
+        print("Load final param.")
         agent.policy_net.set_state_dict(paddle.load(FINAL_PARAM_PATH))
-        print("Loaded final param.")
 
     print("Warm up.")
     while len(memory) < MEMORY_WARMUP_SIZE:

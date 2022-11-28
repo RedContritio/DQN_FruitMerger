@@ -465,8 +465,8 @@ def visualize_feature(
 
     uw, uh = game_w / feature.shape[1], game_h / feature.shape[0]
 
-    print(feature[:, :, 0].max(), feature[:, :, 0].min())
-    print(feature[:, :, 1].max(), feature[:, :, 1].min())
+    # print(feature[:, :, 0].max(), feature[:, :, 0].min())
+    # print(feature[:, :, 1].max(), feature[:, :, 1].min())
 
     _v2c = lambda v: 255 if v > 0 else (0 if v == 0 else int(-v / 13.0 * 255.0))
     value2color = (
