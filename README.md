@@ -17,26 +17,31 @@ DQN 是基于深度学习的 Q 学习算法，主要结合了值函数近似和�
 合成大西瓜玩法与《2048》《俄罗斯方块》类似，两个相同类别的水果碰撞后，合成成为更大的新水果。其中共有11种水果，最终目标是合成大西瓜。
 agent需要学会将水果从合适的位置放下，使水果能顺利合成。
 
+本教程的数据流方向如下所示（不含训练部分）：
+
+![数据流示意图](./resources/illustrations/dataflow.jpg)
+
 ## **二、环境配置**
 
 本教程依赖的非 python 官方包如下：
 
-- `pymunk`: python 2D物理引擎，用于处理物体碰撞等运动
-- `opencv-python`: 图形库，用于绘制界面与交互
-- `numpy`: 数值计算库，主要用于图像处理和模型数据处理
+- pymunk: python 2D物理引擎，用于处理物体碰撞等运动
+- opencv-python: 图形库，用于绘制界面与交互
+- numpy: 数值计算库，主要用于图像处理和模型数据处理
 
 
 ```python
 %pip install paddlepaddle pymunk opencv-python numpy matplotlib
 ```
 
+    
+
+
 ```python
-import os
 import random
 import typing
 import enum
 import collections
-import pymunk
 from threading import Lock
 import base64
 import math
@@ -44,11 +49,9 @@ import datetime
 
 %matplotlib inline
 import matplotlib.pyplot as plt
-
-import cv2
-
 import numpy as np
-
+import pymunk
+import cv2
 import paddle
 from paddle import nn
 from paddle import optimizer
@@ -63,8 +66,11 @@ from paddle import optimizer
 
 ```python
 class EventType(enum.Enum):
+    # 左键单击
     LBUTTONDOWN = (1,)
+    # 鼠标移动
     MOUSEMOVE = (2,)
+    # 右键单击
     RBUTTONDOWN = (3,)
 
 
@@ -73,6 +79,7 @@ class Event:
         self.type = type
 
 
+# 鼠标事件
 class MouseEvent(Event):
     def __init__(self, type: EventType, pos: typing.Tuple[int, int]):
         self.pos = pos
@@ -84,9 +91,12 @@ class GameEventBase:
     def __init__(self):
         self.__events = []
 
+    # 添加一个事件
     def add_event(self, event: Event):
         self.__events.append(event)
 
+    # 获取（上一次获取之后）新发生的事件
+    # 该操作会清空现有事件列表
     @property
     def events(self) -> typing.List[Event]:
         _events = self.__events[:]
@@ -106,6 +116,7 @@ class GameEventBase:
 
 
 ```python
+# 将 background 和 foreground 基于透明度混合（并给 foreground 额外乘算 alpha 的透明度），直接在 background 上修改
 def mix(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> None:
     alpha_back = background[:, :, 3] / 255.0
     alpha_fore = (foreground[:, :, 3] / 255.0) * alpha
@@ -118,6 +129,7 @@ def mix(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> N
     background[:, :, 3] = np.ubyte((1 - (1 - alpha_fore) * (1 - alpha_back)) * 255)
 
 
+# 将 foreground 基于透明度覆盖到 background 上（并给 foreground 额外乘算 alpha 的透明度），直接在 background 上修改
 def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) -> None:
     foreground_colors = foreground[:, :, :3]
     alpha_channel = (foreground[:, :, 3] / 255.0) * alpha
@@ -128,6 +140,7 @@ def cover(background: np.ndarray, foreground: np.ndarray, alpha: float = 1.0) ->
     )
 
 
+# 计算两个矩形框 (x, y, w, h) 的相交矩形框 (ix, iy, iw, ih)
 def intersectRect(rect1: typing.List[int], rect2: typing.List[int]) -> typing.List[int]:
     l1, t1, b1, h1 = rect1
     r1, b1 = l1 + b1, t1 + h1
@@ -140,6 +153,7 @@ def intersectRect(rect1: typing.List[int], rect2: typing.List[int]) -> typing.Li
     return [l, t, max(0, r - l), max(0, b - t)]
 
 
+# 在 image 上以 center 为中心，绘制文字 text （用法同 cv2.putText ）
 def putText2(
     image: np.ndarray,
     text: str,
@@ -175,6 +189,7 @@ def putText2(
         y_base += h + INNER_LINE_MARGIN
 
 
+# 在 image 上基于 pos 点，调用 putTextFunc 绘制文字 text，文字与 image 反色
 def putInverseColorText(
     image: np.ndarray,
     text: str,
@@ -192,24 +207,32 @@ def putInverseColorText(
 
 ### 3.3 伪随机数生成器
 
-自定义伪随机数生成器，便于控制随机过程
+自定义伪随机数生成器，使用二次同余生成器（quadratic congruential generator），便于控制随机过程。
+
+二次同余生成器的算法原理如下： $y_n = (a * y_{n-1}^2 + b *y_{n-1} + c) \mod p     ,n > 0$
+
+在本教程实现中，取 $a = 1, b = c = 0, p = p_1 * p_2$，则算法退化为 $y_n = y_{n-1}^2 \mod (p_1 * p_2)     ,n > 0$
+
+令 $p_1$、$p_2$ 为两个大质数，则生成的随机数周期会更大。
 
 
 ```python
 class PRNG:
     def __init__(self):
-        self.s = 1234
-        self.p = 999979
-        self.q = 999983
-        self.m = self.p * self.q
+        self.s = 1234  # y_0，取为 1234
+        self.p = 999979  # p_1，第一个大质数
+        self.q = 999983  # p_2，第二个大质数
+        self.m = self.p * self.q  # p，模数
 
-    def hash(self, x: any):
+    # 基于 x 的哈希结果，获得一个浮点数
+    def hash(self, x: any) -> float:
         y = base64.encodebytes(bytes(str(x).encode("utf8")))
         z = 0
         for i, v in enumerate(y):
             z += v * math.pow(128, i)
         return z
 
+    # 传入可哈希变量 seed，以此初始化 s (即 y_0)。
     def seed(self, seed: any = datetime.datetime.now()):
         y = 0
         z = 0
@@ -217,22 +240,23 @@ class PRNG:
             y = (self.hash(seed) + z) % self.m
             z += 1
 
-        self.s = y
+        self.s = y  # 初始化 y_0
 
+        # 跳过前 10 个随机数，用来混淆
         [self.next() for _ in range(10)]
 
-    def next(self):
+    # 获取 [0, 1) 的随机浮点数
+    def next(self) -> float:
         self.s = (self.s * self.s) % self.m
         return self.s / self.m
 
-    def random(self, l: float = 0, r: float = 1):
+    # 获取 [l = 0, r = 1) 的随机浮点数
+    def random(self, l: float = 0, r: float = 1) -> float:
         return self.next() * (r - l) + l
 
-    def randint(self, l: int = 0, r: int = 2):
+    # 获取 [l = 0, r = 2) 的随机整数
+    def randint(self, l: int = 0, r: int = 2) -> int:
         return int(math.ceil(self.random(l, r)))
-
-    def randsign(self) -> int:
-        return -1 if self.random() > 0.5 else 1
 ```
 
 ### 3.4 实现水果类
@@ -241,17 +265,24 @@ class PRNG:
 
 定义各种水果的半径、尺寸与对应图片。
 
+（列表中首个元素无意义，用于占位 `type` `0`）
+
 
 ```python
-# list[0] is nonsense for type 0
+# 水果半径 r
 FRUIT_RADIUS = [int(1.5 * r) for r in [-1, 10, 15, 21, 23, 29, 35, 37, 50, 59, 60, 78]]
+# 水果尺寸 (w, h)
 FRUIT_SIZES = [(2 * r, 2 * r) for r in FRUIT_RADIUS]
 
-FRUIT_IMAGE_PATHS = [f"res/{i:02d}.png" for i in range(11)]
+# 水果图像路径
+FRUIT_IMAGE_PATHS = [f"resources/images/{i:02d}.png" for i in range(11)]
+
+# 水果图像原图 (np.ndarray)
 FRUIT_RAW_IMAGES = [
     cv2.imread(FRUIT_IMAGE_PATHS[i], -1) if i > 0 else None for i in range(11)
 ]
 
+# 水果基于尺寸缩放后的图像 (np.ndarray)
 FRUIT_IMAGES = [
     None if img is None else cv2.resize(img, FRUIT_SIZES[i])
     for i, img in enumerate(FRUIT_RAW_IMAGES)
@@ -264,15 +295,17 @@ FRUIT_IMAGES = [
 
 每个水果对应一个该类型实例，主要用于描述水果对象的位置。
 
-其中，水果的种类 `type` 为 `[1, 11]`，其中 `1` 是葡萄，`11` 是大西瓜。
+其中，水果的种类 `type` 为 $[1, 11]$，其中 $1$ 是葡萄，$11$ 是大西瓜。
 
-当两个种类为 `x` 的水果碰撞时，合成出一个种类为 `x+1` 的新水果，并在游戏中获得 `x+1` 分；
 
-特别的，当 `x` 为 `10` 时，合成出的新水果为 `11` （大西瓜），并在游戏中获得 `100` 分。
+合成得分：
+- 当两个种类为 $x$ 的水果碰撞时，合成出一个种类为 $x+1$ 的新水果，并在游戏中获得 $x+1$ 分；
+- 特别的，当 $x=10$ 时，合成出的新水果为 $11$ （大西瓜），并在游戏中获得 $100$ 分。
 
 
 ```python
 class Fruit:
+    # 初始化时，传入水果种类 type 与水果位置 (x, y)
     def __init__(self, type: int, x: int, y: int) -> None:
         self.type = type
         self.r = FRUIT_RADIUS[self.type]
@@ -280,12 +313,15 @@ class Fruit:
 
         self.x, self.y = x, y
 
+    # 更新水果位置
     def update_position(self, x: int, y: int) -> None:
         self.x, self.y = x, y
 
+    # 在 screen 上绘制水果图像
     def draw(self, screen: np.ndarray) -> None:
         Fruit.paint(screen, self.type, self.x, self.y)
 
+    # Fruit.paint，绘制水果图像
     def paint(
         screen: np.ndarray, type: int, x: int, y: int, alpha: float = 1.0
     ) -> None:
@@ -295,6 +331,7 @@ class Fruit:
 
         l, t, w, h = [int(v) for v in (l, t, w, h)]
 
+        # 计算实际绘图区域
         il, it, iw, ih = [
             int(v) for v in intersectRect((l, t, w, h), (0, 0, *screen.shape[1::-1]))
         ]
@@ -316,23 +353,38 @@ GRAVITY = (0, 800)
 GAME_RESOLUTION = GAME_WIDTH, GAME_HEIGHT = 300, 400
 ```
 
+设置背景色为 `rgb(0x41, 0x69, 0xE1)` <font color='#4169E1'>████████</font>
+
 
 ```python
 class GameCore(GameEventBase):
     def __init__(self, gravity: typing.Tuple[int, int] = GRAVITY) -> None:
+        # 初始化游戏场景分辨率 resolution 与游戏场景宽高 width, height
+        # 其中 resolution = (width, height)
         self.resolution = self.width, self.height = GAME_WIDTH, GAME_HEIGHT
+
+        # 水果落下时的初始 x、y 坐标
         self.init_x = int(self.width / 2)
         self.init_y = int(0.15 * self.height)
 
+        # 本局游戏已获得的分数
         self.score = 0
+        # 最近一次合成的分数增量
         self.recent_score_delta = 0
 
+        # 水果列表，每个元素为 Fruit 类型
         self.fruits: typing.List[Fruit] = []
+        # 碰撞球列表，每个元素为 Circle 类型
         self.balls: typing.List[pymunk.Shape] = []
 
+        # 游戏背景色 rgb(0xE1, 0x69, 0x41)
         self.background_color = (0xE1, 0x69, 0x41, 0)
+
+        # 预渲染纯色背景图
         self.preset_background = np.zeros((self.height, self.width, 4), dtype=np.uint8)
         self.preset_background[:, :] = self.background_color
+
+        # 预渲染带红线的纯色背景图（红色警戒线，游戏失败的检查线）
         self.preset_redline_screen = self.preset_background.copy()
         cv2.line(
             self.preset_redline_screen,
@@ -341,29 +393,43 @@ class GameCore(GameEventBase):
             (0, 0, 255),
             2,
         )
+
+        # 基于纯色背景图初始化游戏画面
         self.__screen = self.preset_background.copy()
 
+        # 逻辑互斥锁
         self.lock = Lock()
+        # 渲染互斥锁
         self.render_lock = Lock()
 
+        # 伪随机数生成器
         self.prng = PRNG()
 
+        # 稳定帧数阈值，当持续 10 帧稳定时，视为稳定状态
+        # 用来避免不稳定的平衡态
         self.stable_frame_threshold = 10
+        # 当前帧 id
         self.current_frame_id = 0
+        # 上一稳定状态的帧 id
         self.stable_frame_id = self.current_frame_id - self.stable_frame_threshold
+        # 游戏是否可操作（可以点击）
         self.clickable = False
 
+        # 目前已经合成过的最大水果 type （用于生成新水果）
         self.largest_fruit_type = 1
+        # 当前要放下的水果 type
         self.current_fruit_type = self.create_random_fruit_type()
 
-        self.reset()
-
+        # 初始化物理空间与重力
         self.space = pymunk.Space()
         self.space.gravity = gravity
 
+        # 重置游戏状态
         self.reset()
 
+        # 初始化物理边界
         self.init_segment()
+        # 设置碰撞处理函数
         self.setup_collision_handler()
 
         super().__init__()
@@ -373,7 +439,7 @@ class GameCore(GameEventBase):
         for ball in self.balls:
             self.space.remove(ball, ball.body)
 
-        self.prev_score, self.score = 0, 0
+        self.score = 0
 
         self.fruits.clear()
         self.balls.clear()
@@ -386,12 +452,14 @@ class GameCore(GameEventBase):
         self.largest_fruit_type = 1
         self.current_fruit_type = self.create_random_fruit_type()
 
+        # 如果传入了 seed，则使用 seed 初始化，否则随机初始化
         self.prng.seed(**({} if seed is None else {"seed": seed}))
 
         self.alive = True
 
     # 初始化游戏场景边界（物理引擎）
     def init_segment(self, thinkness: float = 20, friction: float = 0.6):
+        # 四边界分别向外 thinkness 个像素
         l, t = 0 - thinkness, 0 - thinkness - self.height // 2
         r, b = self.width + thinkness, self.height + thinkness
 
@@ -402,36 +470,46 @@ class GameCore(GameEventBase):
             s.friction = friction
             return s
 
-        self.space.add(create_segment((l, t), (l, b)))
-        self.space.add(create_segment((r, t), (r, b)))
-        # no top wall
+        self.space.add(create_segment((l, t), (l, b)))  # 添加左边界
+        self.space.add(create_segment((r, t), (r, b)))  # 添加右边界
+        # 不添加顶部边界
         # self.space.add(create_segment((l, t), (r, t)))
-        self.space.add(create_segment((l, b), (r, b)))
+        self.space.add(create_segment((l, b), (r, b)))  # 添加下边界
 
     # 设置碰撞处理器（物理引擎）
     def setup_collision_handler(self):
         def collision_post_solve(arbiter: pymunk.Arbiter, space: pymunk.Space, _data):
+            # 获取逻辑互斥锁
             with self.lock:
+                # 获取碰撞物体 s_0, s_1
                 s0, s1 = arbiter.shapes[:2]
+                # 要生成的物体类型为 type + 1 （碰撞对象类型为 type）
                 new_type = s0.collision_type + 1
                 x1, y1 = s0.body.position
                 x2, y2 = s1.body.position
+                # 新物体的坐标为碰撞两物体中，坐标更靠下的物体
                 x, y = (x1, y1) if y1 > y2 else (x2, y2)
 
+                # 删除这两个碰撞球
                 if s0 in self.balls and s1 in self.balls:
                     self.remove_ball(space, s0)
                     self.remove_ball(space, s1)
 
+                    # 创建新水果
                     fruit = Fruit(new_type, x, self.init_y)
                     self.fruits.append(fruit)
 
+                    # 创建新水果的碰撞球
                     ball = self.create_ball(
                         self.space, x, y, fruit.r // 10, fruit.r - 1, new_type
                     )
                     self.balls.append(ball)
 
+                    # 更新最大水果类型
                     self.largest_fruit_type = max(self.largest_fruit_type, new_type)
+                    # 记录本次分数增量
                     self.recent_score_delta = new_type if new_type < 11 else 100
+                    # 更新分数
                     self.score += self.recent_score_delta
 
         for collision_type in range(1, 11):
@@ -483,9 +561,10 @@ class GameCore(GameEventBase):
 
     # 绘制游戏界面
     def draw(self):
+        # 双缓冲层，减少对渲染互斥锁的占用
         backbuffer = self.preset_background.copy()
 
-        # if self.clickable:
+        # 绘制半透明的待放置水果
         if self.current_fruit_type > 0:
             y = self.init_y - FRUIT_RADIUS[self.current_fruit_type]
             Fruit.paint(
@@ -496,11 +575,14 @@ class GameCore(GameEventBase):
                 1 if self.clickable else 0.5,
             )
 
+        # 绘制场地中的水果
         for f in self.fruits:
             f.draw(backbuffer)
 
+        # 与红线背景层合成
         cv2.addWeighted(backbuffer, 1, self.preset_redline_screen, 0.5, 0, backbuffer)
 
+        # 绘制分数文本
         putInverseColorText(
             backbuffer,
             f"Score: {self.score}",
@@ -510,6 +592,7 @@ class GameCore(GameEventBase):
             putTextFunc=cv2.putText,
         )
 
+        # 如果已经死亡，绘制死亡文本
         if not self.alive:
             putInverseColorText(
                 backbuffer,
@@ -519,6 +602,7 @@ class GameCore(GameEventBase):
                 thickness=2,
             )
 
+        # 获得渲染锁，更新画面
         with self.render_lock:
             self.__screen[:, :, :] = backbuffer
             return self.__screen
@@ -532,22 +616,25 @@ class GameCore(GameEventBase):
     # 获取特征
     def get_features(self, width: int, height: int) -> np.ndarray:
         """
-        params:
-            - width: width of the grid
-            - height: height of the grid
+        参数:
+            - width: 网格宽度
+            - height: 网格高度
         return:
             - features: (height, width, 2) np.ndarray
-                - features[:, :, 0]: smaller than current fruit
-                - features[:, :, 1]: larger than current fruit
+                - features[:, :, 0]: 用于记录比当前水果小的水果
+                - features[:, :, 1]: 用于记录比当前水果大的水果
         """
+
+        # 计算网格单元宽高
         uw, uh = self.width / width, self.height / height
 
         features = np.zeros((height, width, 2), dtype=np.float32)
 
-        # type, dr
+        # 辅助矩阵，分别记录 type （网格水果类型）, dr（最小距离）
         auxilary = np.zeros((height, width, 2), dtype=np.float32)
         auxilary[:, :, 1] = np.inf
 
+        # 更新阈值，距离 dr 大于该阈值的视为不在网格内
         threshold = ((uw**2) + (uh**2)) // 2
 
         for f in self.fruits:
@@ -557,22 +644,37 @@ class GameCore(GameEventBase):
                 for i in range(height):
                     y = (0.5 + i) * uh
 
+                    # 计算横纵坐标差
                     dx, dy = f.x - x, f.y - y
                     # dr = np.sqrt(dx * dx + dy * dy) - f.r
+                    # 使用平方和代替开方，提高运算速度
                     dr = dx * dx + dy * dy - r2
 
+                    # 如果 dr 小于阈值且小于目前的最小 dr，更新网格内水果信息
                     if dr < threshold and dr < auxilary[i, j, 1]:
                         auxilary[i, j, 0] = f.type
                         auxilary[i, j, 1] = dr
 
+        # 是否为空 (True 或 False)
         is_empty = auxilary[:, :, 0] == 0
+        # 是否和当前水果类型相同 (True 或 False)
         is_same = auxilary[:, :, 0] == self.current_fruit_type
 
+        # 网格内水果类型 (type_1) ，当前水果 (type_0)
+        # 如果 type_1 < type_0，则值为 type_1 - type_0
+        # 如果 type_1 == type_0，则值为 1
+        # 如果 type_1 > type_0，则值为 0
+        # 如果 type_1 == 0 （网格为空），则值为 0
         features[:, :, 0] = auxilary[:, :, 0] - self.current_fruit_type
         features[:, :, 0] = features[:, :, 0].clip(max=0)
         features[:, :, 0][is_same] = 1
         features[:, :, 0][is_empty] = 0
 
+        # 网格内水果类型 (type_1) ，当前水果 (type_0)
+        # 如果 type_1 > type_0，则值为 type_0 - type_1
+        # 如果 type_1 == type_0，则值为 1
+        # 如果 type_1 < type_0，则值为 0
+        # 如果 type_1 == 0 （网格为空），则值为 0
         features[:, :, 1] = self.current_fruit_type - auxilary[:, :, 0]
         features[:, :, 1] = features[:, :, 1].clip(max=0)
         features[:, :, 1][is_same] = 1
@@ -594,19 +696,24 @@ class GameCore(GameEventBase):
             self.update(1.0 / fps)
             step += 1
 
+        # 当超过 max_steps 步仍未稳定时，强制设置为稳定（可操作）
         if step == max_steps:
             self.clickable = True
 
     # 更新游戏（一帧）
     def update(self, time_delta: float):
         self.current_frame_id += 1
+        # 物理引擎单步模拟
         self.space.step(time_delta)
 
+        # 检查稳定状态
         stable = self.check_stable()
         if not stable:
             self.set_unstable()
 
+        # 检查是否失败
         self.alive = self.alive and self.check_alive()
+        # 如果已经失败，则不再进行更新，并等待右键重启游戏
         if not self.alive:
             for event in self.events:
                 if event.type == EventType.RBUTTONDOWN:
@@ -614,6 +721,7 @@ class GameCore(GameEventBase):
                     break
             return
 
+        # 如果已经稳定了足够多 (stable_frame_threshold == 10) 帧并不能进行操作，则设置为可操作
         if (
             not self.clickable
             and self.current_frame_id
@@ -622,8 +730,12 @@ class GameCore(GameEventBase):
             self.prev_stable_frame_id = self.stable_frame_id
             self.clickable = True
 
+        # 处理事件
         for event in self.events:
+            # 左键单击，放下当前水果
             if event.type == EventType.LBUTTONDOWN and self.clickable:
+                # 放下位置为 (x, init_y - fruit.r)
+                # 即圆心横坐标为鼠标横坐标，圆下边界与红线相切
                 x, _y = event.pos
 
                 fruit = self.create_fruit(self.current_fruit_type, x)
@@ -640,10 +752,12 @@ class GameCore(GameEventBase):
                 )
                 self.balls.append(ball)
 
+                # 创建新水果
                 self.current_fruit_type = self.create_random_fruit_type()
                 self.set_unstable()
                 self.clickable = False
 
+            # 鼠标移动时，移动当前水果
             elif event.type == EventType.MOUSEMOVE:
                 self.init_x, _y = event.pos
                 self.init_x = max(
@@ -655,6 +769,7 @@ class GameCore(GameEventBase):
 
         assert not self.lock.locked()
 
+        # 获取逻辑锁，更新所有水果
         with self.lock:
             for i, ball in enumerate(self.balls):
                 x, y = ball.body.position
@@ -704,44 +819,61 @@ class GameCore(GameEventBase):
 
 ### 3.6 游戏接口
 
-封装接口，提供强化学习环境
+封装接口，提供强化学习环境。
 
 提供以下接口：
 
 - `reset`: 重启游戏
 - `simulate_until_stable`: 运行游戏，直到游戏结束或者可以进行下一次操作
-- `next`: 输入 `action`，进行一次模拟，并返回 `(feature, reward, alive)` 三元组
+- `next`: 输入 $action$，进行一次模拟，并返回 $(feature, reward, alive)$ 三元组
 
-其中，`reward` 定义为，一次动作 `action` 后，能带来的 `score` 提升。
+其中，$reward$ 定义为，一次动作 $action$ 后，能带来的 $score$ 提升。
 
-特别的，当 `score` 未改变时，该动作由于减少了空间，其 `reward` 设置为负数 `-fruit.type` （记本次动作放下的水果为 `fruit`） 
+特别的，当 $score$ 未改变时，该动作由于减少了空间，其 $reward$ 设置为负数 $-fruit.type$ （记本次动作放下的水果为 $fruit$） 。
 
-定义模拟时，每秒帧数为 `SIMULATE_FPS = 60` 帧；可进行的动作种类为 `ACTION_NUM = 16` 种（在16个均匀分布的水平坐标处放下水果）。
+定义模拟时，每秒帧数为 $SIMULATE\_FPS = 60$ 帧；可进行的动作种类为 $ACTION\_NUM = 16$ 种（在16个均匀分布的水平坐标处放下水果）。
+
+例如，当 $action = 13$ 时，下一个水果将从从红色区域正中间放下。
+
+红色区域左右边界为 $(width / ACTION\_NUM * 13, width / ACTION\_NUM * (13 + 1))$。
+
+由于 $width = 300$，每个 action 的区域宽度为 $width / ACTION\_NUM = 300 / 16 = 18.75$，左右边界为 $(243.75, 262.5)$。
+
+放下水果的位置为 $x = int(13.5 * 18.75) = int(253.125) = 253$。
+
+![放下水果的辅助线](./resources/illustrations/put_aux_line.png)
 
 
 ```python
 class GameInterface:
+    # 可选的动作数量
     ACTION_NUM = 16
+    # 每秒的帧率
     SIMULATE_FPS = 60
 
+    # 特征图尺寸
     FEATURE_MAP_WIDTH, FEATURE_MAP_HEIGHT = 16, 20
 
     def __init__(self) -> None:
         self.game = GameCore()
         self.action_num = GameInterface.ACTION_NUM
+        # 每个红色区域的宽度
         self.action_segment_len = self.game.width / GameInterface.ACTION_NUM
 
     def reset(self, seed: int = None) -> None:
         self.game.reset(seed)
 
+    # 模拟至稳定状态
     def simulate_until_stable(self) -> None:
         self.game.update_until_stable(GameInterface.SIMULATE_FPS)
 
+    # 将 action 解析成放置坐标（其中 y 无意义）
     def decode_action(self, action: int) -> typing.Tuple[int, int]:
         x = int((action + 0.5) * self.action_segment_len)
 
         return (x, 0)
 
+    # 输入一个 action，进行模拟，并获得特征三元组
     def next(self, action: int) -> typing.Tuple[np.ndarray, int, bool]:
         current_fruit = self.game.current_fruit_type
 
@@ -777,13 +909,13 @@ class GameInterface:
 ```python
 def build_model(input_size: int, output_size: int) -> nn.Layer:
     model_prototype = nn.Sequential(
-        nn.Linear(in_features=input_size, out_features=64),
+        nn.Linear(in_features=input_size, out_features=64),  # 全连接层
         nn.ReLU(),
-        nn.Linear(in_features=64, out_features=64),
+        nn.Linear(in_features=64, out_features=64),  # 全连接层
         nn.ReLU(),
-        nn.Linear(in_features=64, out_features=64),
+        nn.Linear(in_features=64, out_features=64),  # 全连接层
         nn.ReLU(),
-        nn.Linear(in_features=64, out_features=output_size),
+        nn.Linear(in_features=64, out_features=output_size),  # 输出层
     )
 
     return model_prototype
@@ -791,24 +923,24 @@ def build_model(input_size: int, output_size: int) -> nn.Layer:
 
 ### 4.2 构建经验池
 
-经验池可以用来持久化 `experience` （经验），并消除各个 `experience` 之间的相关性。
+经验池可以用来持久化 $experience$ （经验），并消除各个 $experience$ 之间的相关性。
 
-每个 `experience` 主要用于记录 `state` （状态）、`action` （动作） 和 `reward` （奖励）的关联，在强化学习中，通常使用 `(state, action, new_state, reward)` ，以表示状态转移与动作、奖励的关联。
+每个 $experience$ 主要用于记录 $state$ （状态）、$action$ （动作） 和 $reward$ （奖励）的关联，在强化学习中，通常使用 $(state, action, new_state, reward)$ ，以表示状态转移与动作、奖励的关联。
 
-在该项目中，使用 `feature` 表示 `state`，并加入 `alive` （存活与否）表示游戏状态。
+在该项目中，使用 $feature$ 表示 $state$，并加入 $alive$ （存活与否）表示游戏状态。
 
-`experience` 的结构为：
-
-`experience`:
-- `feature`: 动作前的状态（特征）
-- `action`: 进行的动作
-- `reward`: 动作获得的奖励
-- `next_feature`: 动作后的状态（特征）
-- `alive`: 游戏是否仍能进行
+$experience$ 的结构包括以下部分：
+- $feature$: 动作前的状态（特征）
+- $action$: 进行的动作
+- $reward$: 动作获得的奖励
+- $next_feature$: 动作后的状态（特征）
+- $alive$: 游戏是否仍能进行
 
 
 ```python
+# 经验池容量
 MEMORY_SIZE = 50000
+# 经验池中的最小样本数
 MEMORY_WARMUP_SIZE = 5000
 
 
@@ -833,7 +965,9 @@ class ReplayMemory(collections.deque):
 
 
 ```python
+# 学习率
 LEARNING_RATE = 0.001
+# 折扣因子
 GAMMA = 0.99
 ```
 
@@ -847,21 +981,23 @@ class RandomAgent:
     def __init__(self, action_num: int) -> None:
         self.action_num = action_num
 
+    # 随机选择一个动作
     def sample(self, _feature: np.ndarray) -> np.ndarray:
         return self.predict(_feature)
 
+    # 随机选择一个动作
     def predict(self, feature: np.ndarray) -> np.ndarray:
         return np.random.randint(0, self.action_num, size=(1))
 ```
 
 #### 4.3.3 构建DQN Agent
 
-DQN 使用两个结构相同、参数不同的神经网络来训练，`policy_net` 用于学习，每次训练都更新，而 `target_net` 在训练过程中比较固定，定期更新，负责产生目标。
+DQN 使用两个结构相同、参数不同的神经网络来训练，$policy\_net$ 用于学习，每次训练都更新，而 $target\_net$ 在训练过程中比较固定，定期更新，负责产生目标。
 
-优化目标为 $Q^\pi(s_t, a_t) = r_t + Q^\pi(s_{t+1}, \pi(s_{t+1}))$
+优化目标为 $Q^\pi(s_t, a_t) = r_t + Q^\pi(s_{t+1}, \pi(s_{t+1}))$。
 
-其中，左侧 $Q^\pi(s_t, a_t)$ 为模型输出，即 `policy_net`，
-右侧 $r_t + Q^\pi(s_{t+1}, \pi(s_{t+1}))$ 则为目标 `target`，即 `target_net`。
+其中，左侧 $Q^\pi(s_t, a_t)$ 为模型输出，即 $policy\_net$，
+右侧 $r_t + Q^\pi(s_{t+1}, \pi(s_{t+1}))$ 则为目标 $target$，即 $target\_net$。
 
 
 ```python
@@ -880,19 +1016,27 @@ class Agent:
     ) -> None:
         self.policy_net = build_model(feature_dim, action_num)
         self.target_net = build_model(feature_dim, action_num)
+        # 特征维度（输入向量维度）
         self.feature_dim = feature_dim
+        # 可选动作数量（输出向量维度）
         self.action_num = action_num
+
+        # e-greedy 策略的 e-greed
         self.e_greed = e_greed
         self.e_greed_decrement = e_greed_decrement
 
+        # 损失函数与优化器
         self.loss_func = loss_func
         self.optimizer = optimizer.Adam(
             parameters=self.policy_net.parameters(), learning_rate=learning_rate
         )
 
+        # 当前步数
         self.global_step = 0
+        # 每 update_target_steps (200) 步进行 target_net 的更新
         self.update_target_steps = 200
 
+    # 基于 e_greed 策略，随机选择一个动作或基于当前模型选择一个动作
     def sample(self, feature: np.ndarray) -> np.ndarray:
         if np.random.uniform() < self.e_greed:
             action = np.random.randint(0, self.action_num, size=(1))
@@ -903,11 +1047,13 @@ class Agent:
 
         return action
 
+    # 基于当前模型选择一个动作
     def predict(self, feature: np.ndarray) -> np.ndarray:
         with paddle.no_grad():
             action = self.policy_net(paddle.to_tensor(feature)).argmax()
         return action.numpy()
 
+    # 学习，更新 policy_net，并根据 global_step 决定是否更新 target_net
     def learn(
         self,
         feature: np.ndarray,
@@ -916,6 +1062,7 @@ class Agent:
         next_feature: np.ndarray,
         alive: bool,
     ):
+        # 更新 target_net
         if self.global_step % self.update_target_steps == 0:
             self.target_net.load_dict(self.policy_net.state_dict())
             pass
@@ -930,25 +1077,29 @@ class Agent:
 
         output_policy = paddle.squeeze(self.policy_net(feature_batch))
         action_batch = paddle.squeeze(action_batch)
-        # print(action_batch, self.action_num)
+
         action_batch_onehot = nn.functional.one_hot(action_batch, self.action_num)
 
-        # print(paddle.multiply(output_policy, action_batch_onehot).shape)
+        # policy_net 的输出与 action_batch_onehot 点乘，得到 q 值 policy_q_value
         policy_q_value = paddle.sum(
             paddle.multiply(output_policy, action_batch_onehot), axis=1
         )
 
         with paddle.no_grad():
+            # 计算 target_net 的输出 output_target_next
             output_target_next = paddle.squeeze(self.target_net(next_feature_batch))
+            # 计算 target_next_q_value (action)
             target_next_q_value = paddle.max(output_target_next, axis=1)
 
+        # 计算 target_q_value
         target_q_value = paddle.squeeze(reward_batch) + GAMMA * paddle.squeeze(
             target_next_q_value
         ) * paddle.squeeze(alive_batch)
 
-        # print(policy_q_value.shape, target_q_value.shape)
+        # 计算损失
         loss = self.loss_func(policy_q_value, target_q_value)
 
+        # 反向传播损失用于优化
         self.optimizer.clear_grad()
         loss.backward()
 
@@ -963,8 +1114,8 @@ class Agent:
 
 
 ```python
-LEARN_FREQUENCY = 1
-BATCH_SIZE = 32
+LEARN_FREQUENCY = 1  # 每 LEARN_FREQUENCY (1) 步学习一次
+BATCH_SIZE = 32  # 每次学习的 batch 大小
 ```
 
 ### 5.2 运行一局
@@ -976,10 +1127,13 @@ BATCH_SIZE = 32
 def run_episode(
     env: GameInterface, agent: Agent, memory: ReplayMemory, episode_id: int, debug=False
 ):
+    # 初始化环境
     env.reset()
 
     step, rewards_sum = 0, 0
+    # 随机选择第一个动作
     action = np.random.randint(0, env.action_num)
+    # 执行第一个动作，开始模拟以获取特征
     feature, _, alive = env.next(action)
 
     assert alive
@@ -987,14 +1141,19 @@ def run_episode(
     while alive:
         step += 1
 
+        # 获取 action
         action = agent.sample(feature)
+        # 执行 action，获取下一个状态
         next_feature, reward, alive = env.next(action)
 
         # 如果动作导致游戏结束，则 reward 设为 -1000
         reward = reward if alive else -1000
 
+        # 记录到经验池中
         memory.append((feature, action, reward, next_feature, alive))
 
+        # 当经验池中的数据量不小于 MEMORY_WARMUP_SIZE 时，开始学习
+        # 由于 LEARN_FREQUENCY = 1，所以每步都学习
         if (
             len(memory) >= MEMORY_WARMUP_SIZE
             and agent.global_step % LEARN_FREQUENCY == 0
@@ -1016,10 +1175,12 @@ def run_episode(
             )
 
         reward_sum = np.sum(reward)
+        # reward 和加上本次的 reward
         rewards_sum += reward_sum
 
         feature = next_feature
 
+    # 返回本局游戏的总 reward
     return rewards_sum
 ```
 
@@ -1029,18 +1190,26 @@ def run_episode(
 
 
 ```python
+# 特征图的维度（宽、高）
 feature_map_height = GameInterface.FEATURE_MAP_HEIGHT
 feature_map_width = GameInterface.FEATURE_MAP_WIDTH
 
+# 动作数量
 action_dim = GameInterface.ACTION_NUM
+# 输入特征维度
 feature_dim = feature_map_height * feature_map_width * 2
+# e-greed 的初始值
 e_greed = 0.5
+# e-greed 的衰减量
 e_greed_decrement = 1e-6
 
+# 创建环境
 env = GameInterface()
 
+# 创建经验池
 memory = ReplayMemory(MEMORY_SIZE)
 
+# 创建智能体
 agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
 
 FINAL_PARAM_PATH = "final.pdparams"  # 模型保存路径
@@ -1052,9 +1221,9 @@ FINAL_PARAM_PATH = "final.pdparams"  # 模型保存路径
 
 
 ```python
-if os.path.exists(FINAL_PARAM_PATH):
-    print("Load final param.")
-    agent.policy_net.set_state_dict(paddle.load(FINAL_PARAM_PATH))
+# if os.path.exists(FINAL_PARAM_PATH):
+#     print("Load final param.")
+#     agent.policy_net.set_state_dict(paddle.load(FINAL_PARAM_PATH))
 ```
 
 ### 6.3 预热经验池
@@ -1064,29 +1233,31 @@ if os.path.exists(FINAL_PARAM_PATH):
 
 ```python
 print("Warm up.")
+
 while len(memory) < MEMORY_WARMUP_SIZE:
     run_episode(env, agent, memory, -1)
+
 print(f"Memory size is {len(memory)}.")
 ```
 
     Warm up.
-    Memory size is 5044.
+    Memory size is 5007.
     
 
 ### 6.4 创建评价函数
 
 #### 6.4.1 评价函数
 
-传入环境和随机数种子，返回游戏得分与总奖励
+传入环境和随机数种子，返回游戏得分与总奖励。
 
 
 ```python
 def evaluate(
     env: GameInterface, agent: Agent, seed: int = None
 ) -> typing.Tuple[float, float]:
-    env.reset(seed)
-    action = np.random.randint(0, env.action_num)
-    feature, _, alive = env.next(action)
+    env.reset(seed)  # 基于 seed 初始化环境
+    action = np.random.randint(0, env.action_num)  # 选择随机动作
+    feature, _, alive = env.next(action)  # 执行动作，获取特征
     rewards_sum = 0
 
     while alive:
@@ -1094,23 +1265,27 @@ def evaluate(
         feature, reward, alive = env.next(action)
 
         reward_sum = np.sum(reward)
+        # 计算 reward 和
         rewards_sum += reward_sum
 
+    # 返回本局游戏分数 score 和奖励 reward
     return env.game.score, rewards_sum
 ```
 
 #### 6.4.2 与随机智能体对比
 
-进行一定轮次的游戏，并比较双方的平均得分
+进行一定轮次的游戏，并比较双方的平均得分。
 
 
 ```python
+# 初始化用于评估的伪随机数生成器
 evaluate_random = PRNG()
 evaluate_random.seed("RedContritio")
 
+# 进行 50 局游戏，对分数、奖励取平均，降低偶然性
 EVALUATE_TIMES = 50
 
-
+# 与随机智能体对比
 def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> None:
     random_agent = RandomAgent(action_count)
 
@@ -1118,12 +1293,15 @@ def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> 
     scores2, rewards2 = [], []
 
     for _ in range(EVALUATE_TIMES):
+        # 选择环境初始化的随机数种子
         seed = evaluate_random.random()
 
+        # 评估 DQN 智能体
         score1, reward1 = evaluate(env, agent, seed)
         scores1.append(score1)
         rewards1.append(reward1)
 
+        # 评估随机智能体
         score2, reward2 = evaluate(env, random_agent, seed)
         scores2.append(score2)
         rewards2.append(reward2)
@@ -1147,7 +1325,9 @@ def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> 
 max_episode = 2000
 episode_per_save = max_episode // 10
 
+# 记录 DQN 智能体和随机智能体的表现
 history1, history2 = [], []
+# 记录横坐标（局数）
 x_history = []
 
 print("Start training.")
@@ -1164,39 +1344,39 @@ for episode_id in range(0, max_episode + 1):
 ```
 
     Start training.
-    Episode: 0, e_greed: 0.49490400000013635
-    [DQN Agent]		:	mean_score: 19.12,	mean_reward: -2.64
-    [Random Agent]	:	mean_score: 147.58,	mean_reward: 63.36
-    Episode: 200, e_greed: 0.4849900000004016
-    [DQN Agent]		:	mean_score: 151.68,	mean_reward: 74.04
-    [Random Agent]	:	mean_score: 140.34,	mean_reward: 60.68
-    Episode: 400, e_greed: 0.4753390000006598
-    [DQN Agent]		:	mean_score: 153.2,	mean_reward: 71.5
-    [Random Agent]	:	mean_score: 149.84,	mean_reward: 66.22
-    Episode: 600, e_greed: 0.4657300000009169
-    [DQN Agent]		:	mean_score: 196.84,	mean_reward: 105.74
-    [Random Agent]	:	mean_score: 149.66,	mean_reward: 66.58
-    Episode: 800, e_greed: 0.45574600000118404
-    [DQN Agent]		:	mean_score: 190.68,	mean_reward: 96.26
-    [Random Agent]	:	mean_score: 140.6,	mean_reward: 59.8
-    Episode: 1000, e_greed: 0.44584100000144905
-    [DQN Agent]		:	mean_score: 179.94,	mean_reward: 87.88
-    [Random Agent]	:	mean_score: 153.7,	mean_reward: 70.7
-    Episode: 1200, e_greed: 0.43597800000171294
-    [DQN Agent]		:	mean_score: 204.18,	mean_reward: 108.0
-    [Random Agent]	:	mean_score: 162.06,	mean_reward: 74.84
-    Episode: 1400, e_greed: 0.4259410000019815
-    [DQN Agent]	:	mean_score: 197.04,	mean_reward: 100.78
-    [Random Agent]	:	mean_score: 165.24,	mean_reward: 81.72
-    Episode: 1600, e_greed: 0.4160950000022449
-    [DQN Agent]		:	mean_score: 215.94,	mean_reward: 118.0
-    [Random Agent]	:	mean_score: 146.36,	mean_reward: 63.88
-    Episode: 1800, e_greed: 0.40605400000251357
-    [DQN Agent]		:	mean_score: 197.7,	mean_reward: 105.32
-    [Random Agent]	:	mean_score: 154.18,	mean_reward: 70.62
-    Episode: 2000, e_greed: 0.3961830000027777
-    [DQN Agent]		:	mean_score: 210.28,	mean_reward: 114.82
-    [Random Agent]	:	mean_score: 160.0,	mean_reward: 73.52
+    Episode: 0, e_greed: 0.49495300000013503
+    [DQN Agent]	:	mean_score: 76.34,	mean_reward: 22.24
+    [Random Agent]	:	mean_score: 150.04,	mean_reward: 68.12
+    Episode: 200, e_greed: 0.4856550000003838
+    [DQN Agent]	:	mean_score: 165.44,	mean_reward: 83.56
+    [Random Agent]	:	mean_score: 167.26,	mean_reward: 80.94
+    Episode: 400, e_greed: 0.4763610000006325
+    [DQN Agent]	:	mean_score: 192.22,	mean_reward: 100.96
+    [Random Agent]	:	mean_score: 153.32,	mean_reward: 66.52
+    Episode: 600, e_greed: 0.46702500000088226
+    [DQN Agent]	:	mean_score: 197.26,	mean_reward: 105.44
+    [Random Agent]	:	mean_score: 160.68,	mean_reward: 72.7
+    Episode: 800, e_greed: 0.45757400000113513
+    [DQN Agent]	:	mean_score: 183.18,	mean_reward: 91.92
+    [Random Agent]	:	mean_score: 163.68,	mean_reward: 77.58
+    Episode: 1000, e_greed: 0.4481560000013871
+    [DQN Agent]	:	mean_score: 189.1,	mean_reward: 99.46
+    [Random Agent]	:	mean_score: 153.24,	mean_reward: 70.5
+    Episode: 1200, e_greed: 0.4386110000016425
+    [DQN Agent]	:	mean_score: 199.06,	mean_reward: 104.68
+    [Random Agent]	:	mean_score: 149.84,	mean_reward: 65.22
+    Episode: 1400, e_greed: 0.42925800000189274
+    [DQN Agent]	:	mean_score: 145.36,	mean_reward: 70.54
+    [Random Agent]	:	mean_score: 148.64,	mean_reward: 66.72
+    Episode: 1600, e_greed: 0.41988700000214346
+    [DQN Agent]	:	mean_score: 193.4,	mean_reward: 101.98
+    [Random Agent]	:	mean_score: 161.54,	mean_reward: 77.1
+    Episode: 1800, e_greed: 0.41034600000239874
+    [DQN Agent]	:	mean_score: 201.82,	mean_reward: 107.8
+    [Random Agent]	:	mean_score: 165.48,	mean_reward: 81.4
+    Episode: 2000, e_greed: 0.40094500000265026
+    [DQN Agent]	:	mean_score: 194.7,	mean_reward: 100.16
+    [Random Agent]	:	mean_score: 152.68,	mean_reward: 68.44
     
 
 ### 6.6 展示训练历史
@@ -1222,9 +1402,17 @@ plt.show()
 
 
     
-![png](README_files/README_49_0.png)
+![png](README_files/README_51_0.png)
     
 
+
+其中，可以看出，DQN 智能体在 400 轮后（奖励 $reward$）优于随机智能体，因此可以认为该模型学习到了游戏特点。
+
+在 1400 局时的评估中，$score_{DQN} < score_{Random}$，即模型尚有部分情况处理能力较差。
+
+但由于 $score$ 和 $reward$ 存在差异，在 200 轮后，有 $reward_{DQN} > score_{Random}$。
+
+由于奖励 $reward$ 与分数 $score$ 相关，因此两曲线正相关。
 
 ### 6.7 保存模型参数
 
@@ -1247,17 +1435,20 @@ def visualize_feature(
     feature: np.ndarray, game_resolution: typing.Tuple[int, int]
 ) -> np.ndarray:
     game_w, game_h = game_resolution
-    feature_img = np.zeros((game_h, game_w * 2, 3), dtype=np.uint8)
+    feature_img = np.zeros((game_h, game_w * 2, 3), dtype=np.uint8)  # 初始化特征图
 
-    uw, uh = game_w / feature.shape[1], game_h / feature.shape[0]
+    uw, uh = game_w / feature.shape[1], game_h / feature.shape[0]  # 网格宽高
 
-    _v2c = lambda v: 255 if v > 0 else (0 if v == 0 else int(-v / 13.0 * 255.0))
+    _v2c = (
+        lambda v: 255 if v > 0 else (0 if v == 0 else int(-v / 13.0 * 255.0))
+    )  # 特征值转颜色（单通道）
     value2color = (
         lambda v: (_v2c(v), _v2c(v), _v2c(v)) if v >= 0 else (127, _v2c(v), _v2c(v))
-    )
+    )  # 特征值转颜色（三通道）
 
     for i in range(feature.shape[0]):
         for j in range(feature.shape[1]):
+            # 对特征的每个值，基于值对应的颜色来渲染相应的网格
             feature_img[
                 int(i * uh) : int((i + 1) * uh), int(j * uw) : int((j + 1) * uw)
             ] = value2color(feature[i, j, 0])
@@ -1266,6 +1457,7 @@ def visualize_feature(
                 int(j * uw + game_w) : int((j + 1) * uw + game_w),
             ] = value2color(feature[i, j, 1])
 
+            # 绘制特征值文本到对应网格中
             putText2(
                 feature_img,
                 f"{int(feature[i, j, 0])}",
@@ -1281,16 +1473,21 @@ def visualize_feature(
                 color=(0, 0, 255),
             )
 
+    # 绘制网格线（横向）
     for i in range(feature.shape[0]):
         cv2.line(
             feature_img, (0, int(i * uh)), (game_w * 2, int(i * uh)), (255, 0, 0), 1
         )
+    # 绘制最下面的网格线
     cv2.line(feature_img, (0, game_h - 1), (game_w * 2, game_h - 1), (255, 0, 0), 1)
 
+    # 绘制左半部分网格线（纵向）
     for j in range(feature.shape[1]):
         cv2.line(feature_img, (int(j * uw), 0), (int(j * uw), game_h), (0, 255, 0), 1)
+    # 绘制左半部分的右边界线
     cv2.line(feature_img, (game_w - 1, 0), (game_w - 1, game_h), (0, 255, 0), 1)
 
+    # 绘制右半部分网格线（纵向）
     for j in range(feature.shape[1]):
         cv2.line(
             feature_img,
@@ -1299,6 +1496,8 @@ def visualize_feature(
             (0, 255, 0),
             1,
         )
+
+    # 绘制右边界线
     cv2.line(
         feature_img,
         (game_w - 1 + game_w, 0),
@@ -1307,6 +1506,7 @@ def visualize_feature(
         1,
     )
 
+    # 绘制两部分中间的分隔线（较粗）
     cv2.line(feature_img, (game_w, 0), (game_w, game_h), (255, 255, 0), 3)
 
     return feature_img
@@ -1318,9 +1518,11 @@ def visualize_feature(
 
 
 ```python
+# 初始化环境
 env.reset(11235813)
 
 max_steps = 30
+# 预设动作
 actions = [(i % GameInterface.ACTION_NUM) for i in range(max_steps)]
 feature, _, alive = env.next(0)
 rewards_sum = 0
@@ -1333,6 +1535,7 @@ while alive and step < max_steps:
 
     step += 1
 
+# 渲染游戏画面
 env.game.draw()
 
 print(f"score: {env.game.score}, alive: {env.game.alive}")
@@ -1354,6 +1557,7 @@ ax1.axis("off")
 
 rgb_img = cv2.cvtColor(env.game.screen, cv2.COLOR_BGRA2BGR)
 
+# 左侧显示游戏界面
 ax1.imshow(rgb_img[:, :, ::-1])
 
 ax2.set_title("Feature")
@@ -1366,6 +1570,7 @@ rgb_img = visualize_feature(
     env.game.resolution,
 )
 
+# 右侧显示特征图
 ax2.imshow(rgb_img[:, :, ::-1])
 
 plt.show()
@@ -1377,7 +1582,7 @@ plt.show()
 
 
     
-![png](README_files/README_57_1.png)
+![png](README_files/README_60_1.png)
     
 
 
@@ -1401,6 +1606,7 @@ plt.show()
 
 
 ```python
+# 评估 200 局，降低偶然性影响
 EVALUATE_TIMES = 200
 
 random_agent = RandomAgent(GameInterface.ACTION_NUM)
@@ -1431,12 +1637,12 @@ print(
 )
 ```
 
-    [DQN Agent]		:	mean_score: 197.125,	mean_reward: 103.665,
-    					max_score: 358,	max_reward: 237,
-    					min_score: 59,	min_reward: 1
-    [Random Agent]	:	mean_score: 146.37,	mean_reward: 66.315,
-    					max_score: 318,	max_reward: 194,
-    					min_score: 45,	min_reward: -14
+    [DQN Agent]	:	mean_score: 205.01,	mean_reward: 109.82,
+    			max_score: 352,	max_reward: 222,
+    			min_score: 90,	min_reward: 16
+    [Random Agent]	:	mean_score: 153.215,	mean_reward: 69.67,
+    			max_score: 322,	max_reward: 194,
+    			min_score: 57,	min_reward: -16
     
 
-可以看到，使用强化学习后，得分显著优于随机动作，因此认为该网络能学习到游戏策略。
+可以看到，DQN 智能体分数显著优于随机智能体的分数，因此认为该网络能学习到游戏策略。

@@ -4,7 +4,7 @@ import cv2
 WINNAME = "fruit-merger"
 
 FPS = 60
-FAST_MODE = True
+FAST_MODE = False
 # FAST_MODE = False
 
 gc = GameCore()
@@ -25,7 +25,7 @@ def onMouse(event, x, y, flags, param=None):
     elif event == cv2.EVENT_MOUSEMOVE:
         gc.move((x, y))
     elif event == cv2.EVENT_RBUTTONDOWN:
-        gc.rclick((x, y))
+        # gc.rclick((x, y))
         gc.save_screen()
 
 

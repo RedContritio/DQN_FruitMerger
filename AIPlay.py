@@ -46,6 +46,7 @@ if __name__ == "__main__":
             np.uint8
         )
         cv2.imshow(WINNAME2, feature_img)
+        cv2.imwrite("feature.png", feature_img)
 
         step += 1
 
@@ -64,9 +65,11 @@ if __name__ == "__main__":
             -1,
         )
 
+        cv2.imwrite("screen.png", cv2.cvtColor(screen, cv2.COLOR_BGRA2BGR))
         cover(screen, red_rect, 1)
 
         cv2.imshow(WINNAME, screen)
+        cv2.imwrite("screen_ai.png", cv2.cvtColor(screen, cv2.COLOR_BGRA2BGR))
 
         key = cv2.waitKey(0)
         if key == ord("q") or key == 27:
