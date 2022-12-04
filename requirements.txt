@@ -1,0 +1,4 @@
+paddlepaddle
+pymunk
+opencv-python
+numpy
