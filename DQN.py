@@ -1,13 +1,15 @@
 import os
-import random
 import typing
+import random
 import cv2
 import collections
 import numpy as np
 from paddle import nn
+from paddle import optimizer
 import paddle
 
 from GameInterface import GameInterface
+from PRNG import PRNG
 
 WEIGHT_DIR = "weights"
 OUTPUT_DIR = "output"
@@ -18,14 +20,17 @@ for d in [WEIGHT_DIR, OUTPUT_DIR]:
     if not os.path.exists(d):
         os.mkdir(d)
 
-LEARN_FREQUENCY = 5
+LEARN_FREQUENCY = 1
 MEMORY_SIZE = 50000
-MEMORY_WARMUP_SIZE = 1000
+MEMORY_WARMUP_SIZE = 5000
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
 GAMMA = 0.99
 
-EVALUATE_TIMES = 50
+EVALUATE_TIMES = 25
+
+evaluate_random = PRNG()
+evaluate_random.seed("RedContritio")
 
 
 class ReplayMemory(collections.deque):
@@ -45,11 +50,13 @@ class ReplayMemory(collections.deque):
 
 def build_model(input_size: int, output_size: int) -> nn.Layer:
     model_prototype = nn.Sequential(
-        nn.Linear(in_features=input_size, out_features=256),
+        nn.Linear(in_features=input_size, out_features=64),
         nn.ReLU(),
-        nn.Linear(in_features=256, out_features=256),
+        nn.Linear(in_features=64, out_features=64),
         nn.ReLU(),
-        nn.Linear(in_features=256, out_features=output_size),
+        nn.Linear(in_features=64, out_features=64),
+        nn.ReLU(),
+        nn.Linear(in_features=64, out_features=output_size),
     )
 
     return model_prototype
@@ -61,7 +68,7 @@ class RandomAgent:
 
     def sample(self, _feature: np.ndarray) -> np.ndarray:
         return self.predict(_feature)
-        
+
     def predict(self, feature: np.ndarray) -> np.ndarray:
         return np.random.randint(0, self.action_num, size=(1))
 
@@ -87,7 +94,7 @@ class Agent:
         self.e_greed_decrement = e_greed_decrement
 
         self.loss_func = loss_func
-        self.optimizer = paddle.optimizer.Adam(
+        self.optimizer = optimizer.Adam(
             parameters=self.policy_net.parameters(), learning_rate=learning_rate
         )
 
@@ -175,6 +182,8 @@ def run_episode(
         action = agent.sample(feature)
         next_feature, reward, alive = env.next(action)
 
+        reward = reward if alive else -1000
+
         memory.append((feature, action, reward, next_feature, alive))
 
         if (
@@ -215,45 +224,57 @@ def run_episode(
     return rewards_sum
 
 
-def evaluate(env: GameInterface, agent: Agent, e_greed: float = 0, seed: int = None) -> typing.Tuple[float, float]:
-    scores, rewards_sums = [], []
-    for _ in range(EVALUATE_TIMES):
-        env.reset(seed)
-        action = np.random.randint(0, env.action_num)
-        feature, _, alive = env.next(action)
-        rewards_sum = 0
+def evaluate(
+    env: GameInterface, agent: Agent, seed: int = None
+) -> typing.Tuple[float, float]:
+    env.reset(seed)
+    action = np.random.randint(0, env.action_num)
+    feature, _, alive = env.next(action)
+    rewards_sum = 0
 
-        while alive:
-            action = agent.predict(feature)
-            feature, reward, alive = env.next(action)
+    while alive:
+        action = agent.predict(feature)
+        feature, reward, alive = env.next(action)
 
-            reward_sum = np.sum(reward)
-            rewards_sum += reward_sum
+        reward_sum = np.sum(reward)
+        rewards_sum += reward_sum
 
-        scores.append(env.game.score)
-        rewards_sums.append(rewards_sum)
-
-    return np.mean(scores), np.mean(rewards_sums)
+    return env.game.score, rewards_sum
 
 
 def compare_with_random(env: GameInterface, agent: Agent, action_count: int) -> None:
-    seed = random.random()
-    mean_score, mean_reward = evaluate(env, agent, seed)
-    print(f"DQN Agent: mean_score: {mean_score}, mean_reward: {mean_reward}")
-
     random_agent = RandomAgent(action_count)
-    mean_score, mean_reward = evaluate(env, random_agent, seed)
-    print(f"Random Agent: mean_score: {mean_score}, mean_reward: {mean_reward}")
+
+    scores1, rewards1 = [], []
+    scores2, rewards2 = [], []
+
+    for _ in range(EVALUATE_TIMES):
+        seed = evaluate_random.random()
+
+        score1, reward1 = evaluate(env, agent, seed)
+        scores1.append(score1)
+        rewards1.append(reward1)
+
+        score2, reward2 = evaluate(env, random_agent, seed)
+        scores2.append(score2)
+        rewards2.append(reward2)
+
+    print(
+        f"[DQN Agent]\t:\tmean_score: {np.mean(scores1)},\tmean_reward: {np.mean(rewards1)}"
+    )
+    print(
+        f"[Random Agent]\t:\tmean_score: {np.mean(scores2)},\tmean_reward: {np.mean(rewards2)}"
+    )
 
 
 if __name__ == "__main__":
-    class_count = 11
-    memory_size = 15
+    feature_map_height = GameInterface.FEATURE_MAP_HEIGHT
+    feature_map_width = GameInterface.FEATURE_MAP_WIDTH
 
     action_dim = GameInterface.ACTION_NUM
-    feature_dim = (class_count + 2) * (memory_size + 1)
-    e_greed = 0.4
-    e_greed_decrement = 4e-6
+    feature_dim = feature_map_height * feature_map_width * 2
+    e_greed = 0.5
+    e_greed_decrement = 1e-6
 
     env = GameInterface()
 
@@ -262,27 +283,26 @@ if __name__ == "__main__":
     agent = Agent(build_model, feature_dim, action_dim, e_greed, e_greed_decrement)
 
     if os.path.exists(FINAL_PARAM_PATH):
+        print("Load final param.")
         agent.policy_net.set_state_dict(paddle.load(FINAL_PARAM_PATH))
-        print("Loaded final param.")
 
     print("Warm up.")
     while len(memory) < MEMORY_WARMUP_SIZE:
         run_episode(env, agent, memory, -1)
 
-    max_episode = 20000
-    episode_per_save = 1000
+    max_episode = 2000
+    episode_per_save = max_episode // 10
     print("Start training.")
-    for episode_id in range(1, max_episode + 1):
+    for episode_id in range(0, max_episode + 1):
         total_reward = run_episode(env, agent, memory, episode_id)
 
         if episode_id % episode_per_save == 0:
-            save_path = os.path.join(WEIGHT_DIR, f"episode_{episode_id}.pdparams")
-            paddle.save(agent.policy_net.state_dict(), save_path)
-            print(f"Saved model to {save_path}")
-            
-            print(f"Episode: {episode_id}, e_greed: {e_greed}")
-            
+            # save_path = os.path.join(WEIGHT_DIR, f"episode_{episode_id}.pdparams")
+            # paddle.save(agent.policy_net.state_dict(), save_path)
+            # print(f"Saved model to {save_path}")
+
+            print(f"Episode: {episode_id}, e_greed: {agent.e_greed}")
+
             compare_with_random(env, agent, action_dim)
 
     paddle.save(agent.policy_net.state_dict(), FINAL_PARAM_PATH)
-
