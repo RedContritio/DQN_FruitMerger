@@ -269,16 +269,16 @@ if __name__ == "__main__":
     while len(memory) < MEMORY_WARMUP_SIZE:
         run_episode(env, agent, memory, -1)
 
-    max_episode = 5000
-    episode_per_save = max_episode // 20
+    max_episode = 20000
+    episode_per_save = 1000
     print("Start training.")
     for episode_id in range(1, max_episode + 1):
         total_reward = run_episode(env, agent, memory, episode_id)
 
         if episode_id % episode_per_save == 0:
             save_path = os.path.join(WEIGHT_DIR, f"episode_{episode_id}.pdparams")
-            # paddle.save(agent.policy_net.state_dict(), save_path)
-            # print(f"Saved model to {save_path}")
+            paddle.save(agent.policy_net.state_dict(), save_path)
+            print(f"Saved model to {save_path}")
             
             print(f"Episode: {episode_id}, e_greed: {e_greed}")
             
