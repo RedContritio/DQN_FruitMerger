@@ -11,6 +11,9 @@ class GameInterface:
     SIMULATE_FPS = 60
 
     FEATURE_MAP_WIDTH, FEATURE_MAP_HEIGHT = 16, 20
+    
+    ACT_DIM = ACTION_NUM
+    OBS_DIM = FEATURE_MAP_WIDTH * FEATURE_MAP_HEIGHT * 2
 
     def __init__(self) -> None:
         self.game = GameCore()

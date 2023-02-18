@@ -1,6 +1,7 @@
 # Paddle 
 -f https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/stable.html
 paddlepaddle==2.4.1
+parl==2.1.1
 
 # Others
 pymunk
