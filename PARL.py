@@ -2,11 +2,14 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 import paddle.nn.functional as F
-from parl.utils import ReplayMemory, logger
+from parl.utils import ReplayMemory, logger, summary
 import parl
 import copy
 from GameInterface import GameInterface
 import os
+import typing
+from multiprocessing import Pipe, Pool
+from multiprocessing.connection import Connection
 
 WEIGHT_DIR = "weights"
 OUTPUT_DIR = "output"
@@ -24,11 +27,48 @@ BATCH_SIZE = 32
 LEARNING_RATE = 1e-3
 GAMMA = 0.99
 
+MAX_EPISODE = 20000
+
+def start_game(conn: Connection):
+    game = GameInterface()
+    while True:
+        action = conn.recv()
+        feature, reward, alive = game.next(action)
+
+        if not alive:
+            game.reset()
+        
+        conn.send([feature, reward, alive])
+
+class CombinedEnvs:
+    def __init__(self, process_num: int = GameInterface.ACT_DIM) -> None:
+        self.process_num = process_num
+        
+        self.process_pool = Pool(self.process_num)
+        self.parent_conns, self.child_conns = zip(*[Pipe() for _ in range(self.process_num)])
+        
+        for i in range(self.process_num):
+            self.process_pool.apply_async(start_game, args=(self.child_conns[i],))
+    
+    def next(self, actions: typing.List[int]):
+        for i, conn in enumerate(self.parent_conns):
+            conn.send(actions[i])
+        
+        features, rewards, alives = [], [], []
+        
+        for i, conn in enumerate(self.parent_conns):
+            feature, reward, alive = conn.recv()
+            features.append(feature)
+            rewards.append(reward)
+            alives.append(alive)
+            
+        return features, rewards, alives
+        
 
 class Model(parl.Model):
     def __init__(self, obs_dim: int, act_dim: int):
         super(Model, self).__init__()
-        self.hidden_size = [64, 64, 64]
+        self.hidden_size = [256, 256, 256]
 
         self.fc1 = (nn.Linear(obs_dim, self.hidden_size[0]))
         self.fc2 = (nn.Linear(self.hidden_size[0], self.hidden_size[1]))
@@ -98,17 +138,41 @@ class Agent(parl.Agent):
         return loss
 
 
-def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory):
-    if not hasattr(run_train_episode, "id"):
-        run_train_episode.id = 0
+def run_evaluate_episode(env: GameInterface, agent: Agent, eval_episode_groups=1, render=False):
+    rewards_sum = []
+    
+    for i in range(eval_episode_groups):
+        for j in range(env.ACT_DIM):
+            env.reset()
 
+            reward_sum = 0
+            action = j
+            feature, _, alive = env.next(action)
+
+            while alive:
+                action = agent.predict(feature)
+                next_feature, reward, alive = env.next(action)
+
+                reward = reward if alive else -1000
+
+                if alive:
+                    reward_sum += np.sum(reward)
+
+                feature = next_feature
+            
+            rewards_sum.append(reward_sum)
+
+    return np.mean(rewards_sum)
+
+def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory, episode_id: int):
     env.reset()
 
     step, rewards_sum = 0, 0
-    action = np.random.randint(0, env.action_num)
-    feature, _, alive = env.next(action)
 
-    debug = False
+    # action = np.random.randint(0, env.action_num)
+    action = episode_id % env.action_num
+        
+    feature, _, alive = env.next(action)
 
     assert alive
 
@@ -116,8 +180,6 @@ def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory):
         step += 1
 
         action = agent.sample(feature)
-        if not isinstance(action, int):
-            print(action)
         next_feature, reward, alive = env.next(action)
 
         reward = reward if alive else -1000
@@ -133,8 +195,6 @@ def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory):
                 alive_batch,
             ) = rpm.sample_batch(BATCH_SIZE)
 
-            print(feature_batch.shape, action_batch.shape, reward_batch.shape, next_feature_batch.shape, alive_batch.shape)
-
             _loss = agent.learn(
                 feature_batch,
                 action_batch,
@@ -143,29 +203,18 @@ def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory):
                 alive_batch,
             )
 
-        reward_sum = np.sum(reward)
-        rewards_sum += reward_sum
+        if alive:
+            reward_sum = np.sum(reward)
+            rewards_sum += reward_sum
 
         feature = next_feature
-
-        if debug and step % 20 == 0:
-            logger.debug(
-                f"Episode: {run_train_episode.id}, step: {step}, reward: {reward_sum}, e_greed: {agent.e_greed}"
-            )
-        if debug and step % 100 == 0:
-            img_path = os.path.join(
-                OUTPUT_DIR, f"episode_{run_train_episode.id}_step_{step}.png"
-            )
-            env.game.draw()
-
-            env.game.save_screen(img_path)
-
-    run_train_episode.id += 1
 
     return rewards_sum
 
 
 if __name__ == "__main__":
+    parl.connect("localhost:6007", distributed_files=['resources/images/*'])
+    
     env = GameInterface()
     act_dim = env.ACT_DIM
     obs_dim = env.OBS_DIM
@@ -179,5 +228,21 @@ if __name__ == "__main__":
     agent = Agent(alg, obs_dim, act_dim, e_greed=0.1, e_greed_decrement=1e-6)
 
     # warmup memory
-    while len(rpm) < MEMORY_WARMUP_SIZE:
-        run_train_episode(env, agent, rpm)
+    warmup_id = 0
+    while warmup_id % act_dim != 0 or len(rpm) < MEMORY_WARMUP_SIZE:
+        run_train_episode(env, agent, rpm, warmup_id)
+        warmup_id += 1
+
+    episode = 0
+    EVALUATE_EVERY_EPISODE = 100
+    while episode < MAX_EPISODE:
+        for i in range(EVALUATE_EVERY_EPISODE):
+            total_reward = run_train_episode(env, agent, rpm, episode)
+            episode += 1
+            
+        eval_reward = run_evaluate_episode(env, agent, eval_episode_groups=1)
+        logger.info(f"Episode: {episode}, Reward: {total_reward}, Eval Reward: {eval_reward}")
+        summary.add_scalar("log/train", total_reward, episode)
+        summary.add_scalar("log/eval", eval_reward, episode)
+        
+    agent.save('./dqn_model.ckpt')
