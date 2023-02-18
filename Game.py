@@ -16,15 +16,15 @@ FRUIT_RADIUS = [int(1.3 * r) for r in [-1, 10, 15, 21, 23, 29, 35, 37, 50, 59, 6
 FRUIT_RADIUS = [int(1.2 * r) for r in FRUIT_RADIUS]
 FRUIT_SIZES = [(2 * r, 2 * r) for r in FRUIT_RADIUS]
 
-FRUIT_IMAGE_PATHS = [f"resources/images/{i:02d}.png" for i in range(11)]
-FRUIT_RAW_IMAGES = [
-    cv2.imread(FRUIT_IMAGE_PATHS[i], -1) if i > 0 else None for i in range(11)
-]
+# FRUIT_IMAGE_PATHS = [f"resources/images/{i:02d}.png" for i in range(11)]
+# FRUIT_RAW_IMAGES = [
+#     cv2.imread(FRUIT_IMAGE_PATHS[i], -1) if i > 0 else None for i in range(11)
+# ]
 
-FRUIT_IMAGES = [
-    None if img is None else cv2.resize(img, FRUIT_SIZES[i])
-    for i, img in enumerate(FRUIT_RAW_IMAGES)
-]
+# FRUIT_IMAGES = [
+#     None if img is None else cv2.resize(img, FRUIT_SIZES[i])
+#     for i, img in enumerate(FRUIT_RAW_IMAGES)
+# ]
 
 
 class Fruit:

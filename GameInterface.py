@@ -4,8 +4,9 @@ import cv2
 
 import numpy as np
 from Game import GameCore
+import parl
 
-
+@parl.remote_class(wait=False)
 class GameInterface:
     ACTION_NUM = 16
     SIMULATE_FPS = 60
@@ -83,6 +84,7 @@ class GameInterface:
 
         cv2.destroyAllWindows()
 
+parl.connect('localhost:6007')
 
 if __name__ == "__main__":
     gi = GameInterface()

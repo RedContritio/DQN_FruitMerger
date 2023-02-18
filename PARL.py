@@ -8,8 +8,6 @@ import copy
 from GameInterface import GameInterface
 import os
 import typing
-from multiprocessing import Pipe, Pool
-from multiprocessing.connection import Connection
 
 WEIGHT_DIR = "weights"
 OUTPUT_DIR = "output"
@@ -27,42 +25,30 @@ BATCH_SIZE = 32
 LEARNING_RATE = 1e-3
 GAMMA = 0.99
 
+FEATURE_MAP_WIDTH, FEATURE_MAP_HEIGHT = 16, 20
+
+ACT_DIM = 16
+OBS_DIM = FEATURE_MAP_WIDTH * FEATURE_MAP_HEIGHT * 2
+
 MAX_EPISODE = 20000
 
-def start_game(conn: Connection):
-    game = GameInterface()
-    while True:
-        action = conn.recv()
-        feature, reward, alive = game.next(action)
-
-        if not alive:
-            game.reset()
-        
-        conn.send([feature, reward, alive])
-
 class CombinedEnvs:
-    def __init__(self, process_num: int = GameInterface.ACT_DIM) -> None:
+    def __init__(self, process_num: int = ACT_DIM) -> None:
         self.process_num = process_num
         
-        self.process_pool = Pool(self.process_num)
-        self.parent_conns, self.child_conns = zip(*[Pipe() for _ in range(self.process_num)])
-        
-        for i in range(self.process_num):
-            self.process_pool.apply_async(start_game, args=(self.child_conns[i],))
+        self.games = [GameInterface() for _ in range(self.process_num)]
     
     def next(self, actions: typing.List[int]):
-        for i, conn in enumerate(self.parent_conns):
-            conn.send(actions[i])
+        jobs = [game.next(actions[i]) for i, game in enumerate(self.games)]
+        returns = [job.get() for job in jobs]
         
-        features, rewards, alives = [], [], []
-        
-        for i, conn in enumerate(self.parent_conns):
-            feature, reward, alive = conn.recv()
-            features.append(feature)
-            rewards.append(reward)
-            alives.append(alive)
+        features, rewards, alives = list(zip(*returns))
             
         return features, rewards, alives
+    
+    def reset(self):
+        for game in self.games:
+            game.reset()
         
 
 class Model(parl.Model):
@@ -138,53 +124,56 @@ class Agent(parl.Agent):
         return loss
 
 
-def run_evaluate_episode(env: GameInterface, agent: Agent, eval_episode_groups=1, render=False):
-    rewards_sum = []
+def run_evaluate_episode(envs: CombinedEnvs, agent: Agent):
+    reward_list = []
+    act_dim = ACT_DIM
     
-    for i in range(eval_episode_groups):
-        for j in range(env.ACT_DIM):
-            env.reset()
-
-            reward_sum = 0
-            action = j
-            feature, _, alive = env.next(action)
-
-            while alive:
-                action = agent.predict(feature)
-                next_feature, reward, alive = env.next(action)
-
-                reward = reward if alive else -1000
-
-                if alive:
-                    reward_sum += np.sum(reward)
-
-                feature = next_feature
-            
-            rewards_sum.append(reward_sum)
-
-    return np.mean(rewards_sum)
-
-def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory, episode_id: int):
-    env.reset()
-
-    step, rewards_sum = 0, 0
-
-    # action = np.random.randint(0, env.action_num)
-    action = episode_id % env.action_num
+    for i in range(1):
+        envs.reset()
+        total_rewards = [0 for _ in range(act_dim)]
+        dead = [False for _ in range(act_dim)]
         
-    feature, _, alive = env.next(action)
+        actions = list(range(act_dim))
+        np.random.shuffle(actions)
+        
+        features, rewards, alives = envs.next(actions)
+        
+        while not np.all(dead):
+            actions = [agent.sample(feature) for feature in features]
+            next_features, rewards, alives = envs.next(actions)
+            
+            for i, alive in enumerate(alives):
+                if not dead[i]:
+                    total_rewards[i] += rewards[i]
+                    if not alive:
+                        dead[i] = True
+        
+        reward_list += rewards
 
-    assert alive
+    return np.mean(reward_list)
 
-    while alive:
+def run_train_episode(envs: CombinedEnvs, agent: Agent, rpm: ReplayMemory, episode_id: int):
+    step = 0
+
+    envs.reset()
+    dead_count = 0
+    
+    actions = list(range(envs.process_num))
+    np.random.shuffle(actions)
+    
+    features, rewards, alives = envs.next(actions)
+
+    while dead_count < 2 * envs.process_num:
         step += 1
 
-        action = agent.sample(feature)
-        next_feature, reward, alive = env.next(action)
+        actions = [agent.sample(feature) for feature in features]
+        next_features, rewards, alives = envs.next(actions)
 
-        reward = reward if alive else -1000
+        rewards = [reward if alives[i] else -1000 for (i, reward) in enumerate(rewards)]
 
-        rpm.append(feature, action, reward, next_feature, alive)
+        for i, action in enumerate(actions):
+            rpm.append(features[i], action, rewards[i], next_features[i], alives[i])
+            dead_count += 0 if alives[i] else 1
 
         if len(rpm) > MEMORY_WARMUP_SIZE and step % LEARN_FREQUENCY == 0:
             (
@@ -203,25 +192,20 @@ def run_train_episode(env: GameInterface, agent: Agent, rpm: ReplayMemory, episo
                 alive_batch,
             )
 
-        if alive:
-            reward_sum = np.sum(reward)
-            rewards_sum += reward_sum
+        features = next_features
 
-        feature = next_feature
-
-    return rewards_sum
+    return None
 
 
 if __name__ == "__main__":
-    parl.connect("localhost:6007", distributed_files=['resources/images/*'])
+    parl.connect("localhost:6007", distributed_files=['resources/images/*.png'])
     
-    env = GameInterface()
-    act_dim = env.ACT_DIM
-    obs_dim = env.OBS_DIM
+    envs = CombinedEnvs()
+    act_dim = ACT_DIM
+    obs_dim = OBS_DIM
     logger.info("obs_dim {}, act_dim {}".format(obs_dim, act_dim))
 
     rpm = ReplayMemory(MEMORY_SIZE, obs_dim=obs_dim, act_dim=1)
-    act_dim = GameInterface.ACTION_NUM
 
     model = Model(obs_dim, act_dim)
     alg = parl.algorithms.DQN(model, gamma=GAMMA, lr=LEARNING_RATE)
@@ -230,19 +214,18 @@ if __name__ == "__main__":
     # warmup memory
     warmup_id = 0
     while warmup_id % act_dim != 0 or len(rpm) < MEMORY_WARMUP_SIZE:
-        run_train_episode(env, agent, rpm, warmup_id)
+        run_train_episode(envs, agent, rpm, warmup_id)
         warmup_id += 1
 
     episode = 0
-    EVALUATE_EVERY_EPISODE = 100
+    EVALUATE_EVERY_EPISODE = 50
     while episode < MAX_EPISODE:
         for i in range(EVALUATE_EVERY_EPISODE):
-            total_reward = run_train_episode(env, agent, rpm, episode)
+            run_train_episode(envs, agent, rpm, episode)
             episode += 1
             
-        eval_reward = run_evaluate_episode(env, agent, eval_episode_groups=1)
-        logger.info(f"Episode: {episode}, Reward: {total_reward}, Eval Reward: {eval_reward}")
-        summary.add_scalar("log/train", total_reward, episode)
+        eval_reward = run_evaluate_episode(envs, agent)
+        logger.info(f"Episode: {episode}, Eval Reward: {eval_reward}")
         summary.add_scalar("log/eval", eval_reward, episode)
         
     agent.save('./dqn_model.ckpt')
