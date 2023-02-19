@@ -147,8 +147,10 @@ def run_evaluate_episode(envs: CombinedEnvs, agent: Agent):
                     total_rewards[i] += rewards[i]
                     if not alive:
                         dead[i] = True
+                        
+            features = next_features
         
-        reward_list += rewards
+        reward_list += total_rewards
 
     return np.mean(reward_list)
 
